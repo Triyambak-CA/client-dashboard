@@ -51,17 +51,16 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      height: 100vh;
+      height: 80vh;
       font-size: 52px;
       font-weight: 300;
       color: #9be7a7;
       text-align: center;
+      padding-top: 60px;
     }
     #search-container {
-      display: none;
       text-align: center;
-      margin-top: 20px;
-      padding-top: 120px;
+      padding: 60px 0 20px;
     }
     #searchBar {
       padding: 14px;
@@ -73,27 +72,34 @@
       background-color: #1e1e1e;
       color: #fff;
     }
+    .carousel {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      gap: 20px;
+      padding: 20px 40px;
+    }
     .card {
+      flex: 0 0 300px;
+      scroll-snap-align: start;
       background-color: #1e1e1e;
       padding: 20px;
-      margin: 18px auto;
-      border-radius: 10px;
-      box-shadow: 0 0 5px rgba(0,0,0,0.2);
-      max-width: 800px;
-      transition: all 0.2s ease-in-out;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
+      transition: transform 0.2s;
     }
     .card:hover {
-      transform: scale(1.01);
+      transform: scale(1.03);
     }
     .card h3 {
       margin-bottom: 10px;
       color: #a5d6a7;
-      font-size: 22px;
-      font-weight: 400;
+      font-size: 20px;
+      font-weight: 500;
     }
     .card p {
-      margin: 4px 0;
-      font-size: 16px;
+      margin: 5px 0;
+      font-size: 15px;
     }
     .label {
       color: #aaaaaa;
@@ -131,7 +137,7 @@
   <div id="search-container">
     <input type="text" id="searchBar" placeholder="Search by Name, PAN, TAN..." onkeyup="filterCards()">
   </div>
-  <div id="cards-container"></div>
+  <div class="carousel" id="cards-container"></div>
 </section>
 
 <script>
@@ -178,7 +184,7 @@
   }
 
   function showSearch() {
-    document.getElementById("search-container").style.display = "block";
+    document.getElementById("search-container").scrollIntoView({ behavior: 'smooth' });
   }
 
   Papa.parse(sheetURL, {
