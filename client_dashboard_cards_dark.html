@@ -1,0 +1,95 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Client Credential Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #121212;
+      color: #ffffff;
+      padding: 20px;
+    }
+    h2 {
+      color: #00bcd4;
+    }
+    #searchBar {
+      padding: 10px;
+      margin-bottom: 20px;
+      width: 100%;
+      max-width: 400px;
+      border: none;
+      border-radius: 5px;
+      font-size: 16px;
+    }
+    .card {
+      background-color: #1e1e1e;
+      padding: 20px;
+      margin-bottom: 15px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    }
+    .card h3 {
+      margin: 0 0 10px;
+      color: #03a9f4;
+    }
+    .card p {
+      margin: 5px 0;
+    }
+    .view-more {
+      background-color: #00bcd4;
+      color: #000;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Client Credential Dashboard</h2>
+<input type="text" id="searchBar" placeholder="Search by Name, PAN, TAN..." onkeyup="filterCards()">
+
+<div id="cards-container"></div>
+
+<script>
+  const sheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQaENJvfxYFqsKRFKAIHb-nlYI9vOnLZqJ99aYxztjOXCvLXn6a4CkhbEOB5JpeXFOIZFJuvf4tPZcp/pub?gid=0&single=true&output=csv';
+
+  function createCard(client, index) {
+    return `
+      <div class="card" data-index="${index}">
+        <h3>${client["Client Name"]}</h3>
+        <p><strong>PAN:</strong> ${client["PAN"] || "N/A"}</p>
+        <p><strong>TAN:</strong> ${client["TAN"] || "N/A"}</p>
+        <p><strong>GSTIN:</strong> ${client["GSTIN"] || "N/A"}</p>
+        <button class="view-more" onclick="alert('More details for ${client["Client Name"]}')">View More</button>
+      </div>
+    `;
+  }
+
+  function filterCards() {
+    const query = document.getElementById("searchBar").value.toLowerCase();
+    const cards = document.querySelectorAll(".card");
+    cards.forEach(card => {
+      const text = card.textContent.toLowerCase();
+      card.style.display = text.includes(query) ? "block" : "none";
+    });
+  }
+
+  Papa.parse(sheetURL, {
+    download: true,
+    header: true,
+    complete: function(results) {
+      const data = results.data;
+      const container = document.getElementById("cards-container");
+      container.innerHTML = data.map((client, i) => createCard(client, i)).join("");
+    }
+  });
+</script>
+
+</body>
+</html>
