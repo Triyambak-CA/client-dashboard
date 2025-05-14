@@ -72,12 +72,17 @@
       background-color: #1e1e1e;
       color: #fff;
     }
+    .carousel-wrapper {
+      position: relative;
+      overflow: hidden;
+    }
     .carousel {
       display: flex;
       overflow-x: auto;
       scroll-snap-type: x mandatory;
       gap: 20px;
-      padding: 20px 40px;
+      padding: 20px 60px;
+      scroll-behavior: smooth;
     }
     .card {
       flex: 0 0 300px;
@@ -120,6 +125,25 @@
       padding-top: 10px;
       border-top: 1px solid #333;
     }
+    .nav-arrow {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid #4CAF50;
+      color: #4CAF50;
+      padding: 10px;
+      border-radius: 50%;
+      cursor: pointer;
+      z-index: 10;
+      font-size: 18px;
+    }
+    .nav-left {
+      left: 10px;
+    }
+    .nav-right {
+      right: 10px;
+    }
   </style>
 </head>
 <body>
@@ -137,7 +161,11 @@
   <div id="search-container">
     <input type="text" id="searchBar" placeholder="Search by Name, PAN, TAN..." onkeyup="filterCards()">
   </div>
-  <div class="carousel" id="cards-container"></div>
+  <div class="carousel-wrapper">
+    <div class="nav-arrow nav-left" onclick="scrollCarousel(-1)">‹</div>
+    <div class="carousel" id="cards-container"></div>
+    <div class="nav-arrow nav-right" onclick="scrollCarousel(1)">›</div>
+  </div>
 </section>
 
 <script>
@@ -185,6 +213,12 @@
 
   function showSearch() {
     document.getElementById("search-container").scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function scrollCarousel(direction) {
+    const carousel = document.getElementById("cards-container");
+    const scrollAmount = 320 * direction;
+    carousel.scrollBy({ left: scrollAmount, behavior: 'smooth' });
   }
 
   Papa.parse(sheetURL, {
