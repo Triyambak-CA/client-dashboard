@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,13 +5,9 @@
   <title>YouWe Quest - Dashboard</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
   <style>
-    * {
-      scroll-behavior: smooth;
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
+    * { box-sizing: border-box; scroll-behavior: smooth; }
     body {
+      margin: 0;
       font-family: 'Inter', 'Segoe UI', sans-serif;
       background-color: #0a0a0a;
       color: #e0e0e0;
@@ -30,8 +25,8 @@
       z-index: 1000;
     }
     header h1 {
-      color: #4CAF50;
       font-size: 24px;
+      color: #4CAF50;
     }
     .menu-button {
       color: #e0e0e0;
@@ -39,18 +34,17 @@
       border: 1px solid #4CAF50;
       padding: 10px 16px;
       border-radius: 6px;
-      cursor: pointer;
       font-size: 14px;
+      cursor: pointer;
     }
     .welcome {
-      display: flex;
-      align-items: center;
-      justify-content: center;
       height: 100vh;
-      font-size: 52px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 56px;
       font-weight: 300;
       color: #9be7a7;
-      text-align: center;
     }
     #client-section {
       display: none;
@@ -64,84 +58,49 @@
       padding: 14px;
       width: 90%;
       max-width: 460px;
+      font-size: 18px;
       border: none;
       border-radius: 6px;
-      font-size: 18px;
       background-color: #1e1e1e;
-      color: #fff;
+      color: white;
     }
     .carousel-wrapper {
-      position: relative;
-      overflow: hidden;
       padding: 0 60px;
+      position: relative;
     }
     .carousel {
       display: flex;
       overflow-x: auto;
-      scroll-snap-type: x mandatory;
       gap: 20px;
+      scroll-snap-type: x mandatory;
       padding: 20px 0;
     }
     .card {
       flex: 0 0 300px;
-      scroll-snap-align: start;
       background-color: #1e1e1e;
-      padding: 20px;
       border-radius: 12px;
+      padding: 20px;
+      scroll-snap-align: start;
       box-shadow: 0 0 10px rgba(0,0,0,0.3);
-      transition: transform 0.2s;
     }
-    .card:hover {
-      transform: scale(1.03);
-    }
-    .card h3 {
-      margin-bottom: 10px;
-      color: #a5d6a7;
-      font-size: 20px;
-      font-weight: 500;
-    }
-    .card p {
-      margin: 5px 0;
-      font-size: 15px;
-    }
-    .label {
-      color: #aaaaaa;
-    }
+    .card h3 { margin-bottom: 10px; color: #a5d6a7; font-size: 20px; }
+    .card p { margin: 5px 0; font-size: 15px; }
     .view-more {
       background-color: #4CAF50;
       color: #121212;
       border: none;
       padding: 8px 14px;
       border-radius: 4px;
-      cursor: pointer;
       margin-top: 10px;
-      font-weight: 500;
+      cursor: pointer;
     }
     .extra-details {
       display: none;
       margin-top: 10px;
-      padding-top: 10px;
       border-top: 1px solid #333;
+      padding-top: 10px;
     }
-    .nav-arrow {
-      position: absolute;
-      top: 50%;
-      transform: translateY(-50%);
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid #4CAF50;
-      color: #4CAF50;
-      padding: 10px;
-      border-radius: 50%;
-      cursor: pointer;
-      z-index: 10;
-      font-size: 18px;
-    }
-    .nav-left {
-      left: 10px;
-    }
-    .nav-right {
-      right: 10px;
-    }
+    .label { color: #aaaaaa; }
   </style>
 </head>
 <body>
@@ -151,7 +110,7 @@
   <button class="menu-button" onclick="showClientCreds()">Client Creds</button>
 </header>
 
-<div class="welcome">
+<div class="welcome" id="welcome-section">
   Welcome to YouWe Quest
 </div>
 
@@ -160,65 +119,48 @@
     <input type="text" id="searchBar" placeholder="Search by Name, PAN, TAN..." onkeyup="filterCards()">
   </div>
   <div class="carousel-wrapper">
-    <div class="nav-arrow nav-left" onclick="scrollCarousel(-1)">‹</div>
     <div class="carousel" id="cards-container"></div>
-    <div class="nav-arrow nav-right" onclick="scrollCarousel(1)">›</div>
   </div>
 </section>
 
 <script>
   const sheetURL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQaENJvfxYFqsKRFKAIHb-nlYI9vOnLZqJ99aYxztjOXCvLXn6a4CkhbEOB5JpeXFOIZFJuvf4tPZcp/pub?gid=0&single=true&output=csv';
 
+  function showClientCreds() {
+    document.getElementById('welcome-section').style.display = 'none';
+    document.getElementById('client-section').style.display = 'block';
+    document.getElementById('client-section').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function toggleDetails(index) {
+    const details = document.getElementById('details-' + index);
+    details.style.display = details.style.display === 'none' ? 'block' : 'none';
+  }
+
+  function filterCards() {
+    const query = document.getElementById('searchBar').value.toLowerCase();
+    const cards = document.querySelectorAll('.card');
+    cards.forEach(card => {
+      const text = card.textContent.toLowerCase();
+      card.style.display = text.includes(query) ? 'block' : 'none';
+    });
+  }
+
   function createCard(client, index) {
     return `
       <div class="card" data-index="${index}">
         <h3>${client["Client Name"]}</h3>
-        <p><span class="label">PAN:</span> ${client["PAN"] || "N/A"}</p>
-        <p><span class="label">TAN:</span> ${client["TAN"] || "N/A"}</p>
-        <p><span class="label">GSTIN:</span> ${client["GSTIN"] || "N/A"}</p>
+        <p><span class="label">PAN:</span> ${client["PAN"]}</p>
+        <p><span class="label">TAN:</span> ${client["TAN"]}</p>
+        <p><span class="label">GSTIN:</span> ${client["GSTIN"]}</p>
         <button class="view-more" onclick="toggleDetails(${index})">View More</button>
         <div class="extra-details" id="details-${index}">
-          <p><span class="label">DOB:</span> ${client["Date of Birth"] || "N/A"}</p>
-          <p><span class="label">Aadhaar No.:</span> ${client["Aadhaar No."] || "N/A"}</p>
-          <p><span class="label">GST User ID:</span> ${client["GST User ID"] || "N/A"}</p>
-          <p><span class="label">GST Password:</span> ${client["GST Password"] || "N/A"}</p>
-          <p><span class="label">E-Way Bill User ID:</span> ${client["E-Way Bill User ID"] || "N/A"}</p>
-          <p><span class="label">E-Way Bill Password:</span> ${client["E-Way Bill Password"] || "N/A"}</p>
-          <p><span class="label">Income Tax Password:</span> ${client["Income Tax Password"] || "N/A"}</p>
-          <p><span class="label">TRACES User ID (Deductor):</span> ${client["TRACES User ID (Deductor)"] || "N/A"}</p>
-          <p><span class="label">TRACES Password (Deductor):</span> ${client["TRACES Password (Deductor)"] || "N/A"}</p>
-          <p><span class="label">TRACES User ID (Taxpayer):</span> ${client["TRACES User ID (Taxpayer)"] || "N/A"}</p>
-          <p><span class="label">TRACES Password (Taxpayer):</span> ${client["TRACES Password (Taxpayer)"] || "N/A"}</p>
-          <p><span class="label">TDS Filing Portal Password:</span> ${client["TDS Filing Portal Password"] || "N/A"}</p>
+          <p><span class="label">DOB:</span> ${client["Date of Birth"]}</p>
+          <p><span class="label">Aadhaar:</span> ${client["Aadhaar No."]}</p>
+          <p><span class="label">GST User ID:</span> ${client["GST User ID"]}</p>
+          <p><span class="label">Password:</span> ${client["GST Password"]}</p>
         </div>
-      </div>
-    `;
-  }
-
-  function toggleDetails(index) {
-    const details = document.getElementById("details-" + index);
-    details.style.display = details.style.display === "none" || details.style.display === "" ? "block" : "none";
-  }
-
-  function filterCards() {
-    const query = document.getElementById("searchBar").value.toLowerCase();
-    const cards = document.querySelectorAll(".card");
-    cards.forEach(card => {
-      const text = card.textContent.toLowerCase();
-      card.style.display = text.includes(query) ? "block" : "none";
-    });
-  }
-
-  function scrollCarousel(direction) {
-    const carousel = document.getElementById("cards-container");
-    const scrollAmount = 320 * direction;
-    carousel.scrollBy({ left: scrollAmount, behavior: 'smooth' });
-  }
-
-  function showClientCreds() {
-    document.querySelector('.welcome').style.display = 'none';
-    document.getElementById("client-section").style.display = 'block';
-    document.getElementById("client-section").scrollIntoView({ behavior: 'smooth' });
+      </div>`;
   }
 
   Papa.parse(sheetURL, {
