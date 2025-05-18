@@ -33,12 +33,17 @@
         </div>
     </div>
 
-    <!-- Main Content (hidden until login) -->
+    <!-- Main Content (hidden until login ) -->
     <div id="main-content" class="hidden">
         <!-- Header -->
         <header>
             <div class="logo">YouWe Quest</div>
-            <button id="client-creds-button" class="primary-button">Client Creds</button>
+            <div class="header-actions">
+                <button id="theme-toggle" class="icon-button" aria-label="Toggle theme">
+                    <i class="fas fa-moon"></i>
+                </button>
+                <button id="client-creds-button" class="primary-button">Client Creds</button>
+            </div>
         </header>
 
         <!-- Welcome Screen -->
@@ -51,7 +56,7 @@
         <div id="client-dashboard" class="hidden">
             <!-- Search Bar -->
             <div class="search-container">
-                <input type="text" id="search-input" placeholder="Search by Name, PAN, or GSTIN">
+                <input type="text" id="search-input" placeholder="Search by Name, Legal Name, PAN, or GSTIN">
                 <i class="fas fa-search search-icon"></i>
             </div>
 
@@ -114,6 +119,7 @@
     <script src="js/auth.js"></script>
     <script src="js/data.js"></script>
     <script src="js/ui.js"></script>
+    <script src="js/theme.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>
