@@ -1,122 +1,106 @@
 // data.js - Handles data fetching and processing
 
-// Configuration
-const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQaENJvfxYFqsKRFKAIHb-nlYI9vOnLZqJ99aYxztjOXCvLXn6a4CkhbEOB5JpeXFOIZFJuvf4tPZcp/pub?gid=0&single=true&output=csv";
+// Google Sheet CSV URL
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQaENJvfxYFqsKRFKAIHb-nlYI9vOnLZqJ99aYxztjOXCvLXn6a4CkhbEOB5JpeXFOIZFJuvf4tPZcp/pub?gid=0&single=true&output=csv';
 
-// Data structure
-let clientsData = [];
-let isDataLoaded = false;
-
-// Field groupings
-const fieldGroups = {
-    basicData: [
-        "Client Name", "Legal Name", "Constitution", "GST Reg Type", 
-        "GSTIN", "PAN", "Father's Name", "DOB", "Aadhaar No.", 
-        "TAN", "Auth. Signatory"
-    ],
-    gstData: [
-        "GST User ID", "GST Password", "EWB Portal ID", 
-        "EWB Pass", "EWB API ID", "EWB API Pass"
-    ],
-    incomeTaxData: [
-        "IT Login Pass", "TRACES User ID (Deductor)", "TRACES Password (Deductor)",
-        "TRACES User ID (Tax Payer)", "TRACES Password (Tax Payer)",
-        "Income Tax P/w for TDS Filing"
-    ]
-};
-
-// Functions
-function fetchClientData() {
-    return new Promise((resolve, reject) => {
-        // Show loading indicator
-        const loadingIndicator = document.getElementById('loading-indicator');
-        if (loadingIndicator) {
-            loadingIndicator.classList.remove('hidden');
-        }
-        
-        // If data is already loaded, return it immediately
-        if (isDataLoaded && clientsData.length > 0) {
-            if (loadingIndicator) {
-                loadingIndicator.classList.add('hidden');
-            }
-            resolve(clientsData);
-            return;
-        }
-        
-        Papa.parse(CSV_URL, {
-            download: true,
-            header: true,
-            complete: function(results) {
-                // Filter out empty rows and process data
-                clientsData = results.data
-                    .filter(client => client["Client Name"])
-                    .map(client => {
-                        // Ensure all fields exist (even if empty)
-                        fieldGroups.basicData.forEach(field => {
-                            if (client[field] === undefined) client[field] = '';
-                        });
-                        fieldGroups.gstData.forEach(field => {
-                            if (client[field] === undefined) client[field] = '';
-                        });
-                        fieldGroups.incomeTaxData.forEach(field => {
-                            if (client[field] === undefined) client[field] = '';
-                        });
-                        return client;
-                    });
-                
-                isDataLoaded = true;
-                
-                // Hide loading indicator
-                if (loadingIndicator) {
-                    loadingIndicator.classList.add('hidden');
-                }
-                
-                resolve(clientsData);
-            },
-            error: function(error) {
-                console.error("Error fetching or parsing CSV:", error);
-                
-                // Hide loading indicator and show error
-                if (loadingIndicator) {
-                    loadingIndicator.classList.add('hidden');
-                }
-                
-                reject(error);
-            }
-        });
-    });
-}
-
-function getClientByName(clientName) {
-    return clientsData.find(client => client["Client Name"] === clientName);
-}
-
-function searchClients(query) {
-    if (!query) return clientsData;
+// Data module
+const dataModule = (function( ) {
+    // Private variables
+    let clientData = [];
+    let filteredClients = [];
     
-    query = query.toLowerCase();
-    return clientsData.filter(client => {
-        return (
-            (client["Client Name"] && client["Client Name"].toLowerCase().includes(query)) ||
-            (client["PAN"] && client["PAN"].toLowerCase().includes(query)) ||
-            (client["GSTIN"] && client["GSTIN"].toLowerCase().includes(query))
-        );
-    });
-}
+    // Field groupings
+    const fieldGroups = {
+        basicData: [
+            'Client_Name', 'Legal_Name', 'Constitution', 'GST_Reg_Type', 
+            'GSTIN', 'PAN', 'Fathers_Name', 'DOB', 'Aadhaar_No', 
+            'TAN', 'Auth_Signatory'
+        ],
+        gstData: [
+            'GST_User_ID', 'GST_Password', 'EWB_Portal_ID', 'EWB_Pass', 
+            'EWB_API_ID', 'EWB_API_Pass'
+        ],
+        incomeTaxData: [
+            'IT_Login_Pass', 'TRACES_User_ID_Deductor', 'TRACES_Password_Deductor',
+            'TRACES_User_ID_Tax_Payer', 'TRACES_Password_Tax_Payer',
+            'Income_Tax_Pw_for_TDS_Filing'
+        ]
+    };
+    
+    // Fetch client data from Google Sheet
+    async function fetchClientData() {
+        try {
+            const response = await fetch(CSV_URL);
+            const csvText = await response.text();
+            
+            // Parse CSV using PapaParse
+            Papa.parse(csvText, {
+                header: true,
+                complete: function(results) {
+                    clientData = results.data.filter(client => client.Client_Name); // Filter out empty rows
+                    filteredClients = [...clientData]; // Initialize filtered clients with all clients
+                    
+                    // Notify UI to render client cards
+                    window.uiModule.renderClientCards(clientData);
+                    window.uiModule.hideLoading();
+                },
+                error: function(error) {
+                    console.error('Error parsing CSV:', error);
+                    window.uiModule.showError('Failed to load client data. Please try again later.');
+                    window.uiModule.hideLoading();
+                }
+            });
+        } catch (error) {
+            console.error('Error fetching CSV:', error);
+            window.uiModule.showError('Failed to fetch client data. Please check your internet connection.');
+            window.uiModule.hideLoading();
+        }
+    }
+    
+    // Search clients by name, legal name, PAN, or GSTIN
+    function searchClients(query) {
+        if (!query) {
+            filteredClients = [...clientData];
+            return filteredClients;
+        }
+        
+        query = query.toLowerCase();
+        filteredClients = clientData.filter(client => {
+            return (
+                (client.Client_Name && client.Client_Name.toLowerCase().includes(query)) ||
+                (client.Legal_Name && client.Legal_Name.toLowerCase().includes(query)) ||
+                (client.PAN && client.PAN.toLowerCase().includes(query)) ||
+                (client.GSTIN && client.GSTIN.toLowerCase().includes(query))
+            );
+        });
+        
+        return filteredClients;
+    }
+    
+    // Get client by index
+    function getClientByIndex(index) {
+        return filteredClients[index];
+    }
+    
+    // Get field groups
+    function getFieldGroups() {
+        return fieldGroups;
+    }
+    
+    // Get current filtered clients
+    function getFilteredClients() {
+        return filteredClients;
+    }
+    
+    // Public API
+    return {
+        fetchClientData,
+        searchClients,
+        getClientByIndex,
+        getFieldGroups,
+        getFilteredClients
+    };
+})();
 
-function getFieldGroups() {
-    return fieldGroups;
-}
-
-function isDataReady() {
-    return isDataLoaded;
-}
-
-// Expose functions for other modules
-window.dataModule = {
-    fetchClientData,
-    getClientByName,
-    searchClients,
-    getFieldGroups,
-    isDataReady
-};
+// Expose module to window
+window.dataModule = dataModule;
