@@ -1,10 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouWe Quest</title>
     <link rel="stylesheet" href="css/styles.css">
+    <!-- Google Fonts for typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- PapaParse for CSV parsing -->
@@ -12,7 +17,18 @@
     <!-- Favicon -->
     <link rel="icon" href="assets/icons/favicon.svg" type="image/svg+xml">
 </head>
+
 <body>
+    <!-- Animated Background Bubbles -->
+    <div class="bg-bubbles">
+        <div class="bubble"></div>
+        <div class="bubble"></div>
+        <div class="bubble"></div>
+        <div class="bubble"></div>
+        <div class="bubble"></div>
+        <div class="bubble"></div>
+    </div>
+
     <!-- Login Overlay -->
     <div id="login-overlay" class="overlay">
         <div class="login-container">
@@ -75,7 +91,7 @@
             <div class="modal-header">
                 <h2 id="modal-client-name">Client Name</h2>
             </div>
-            
+
             <!-- Basic Data Section -->
             <div class="data-section basic-data">
                 <h3>Basic Data</h3>
@@ -83,7 +99,7 @@
                     <!-- Basic data fields will be dynamically generated here -->
                 </div>
             </div>
-            
+
             <!-- GST and Income Tax Sections Container -->
             <div class="sections-container">
                 <!-- GST Data Section -->
@@ -93,7 +109,7 @@
                         <!-- GST data fields will be dynamically generated here -->
                     </div>
                 </div>
-                
+
                 <!-- Income Tax Data Section -->
                 <div class="data-section income-tax-data">
                     <h3>Income Tax</h3>
@@ -116,4 +132,5 @@
     <script src="js/ui.js"></script>
     <script src="js/app.js"></script>
 </body>
+
 </html>
