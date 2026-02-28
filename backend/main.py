@@ -44,7 +44,13 @@ def health():
 
 
 # Serve React frontend static files
-DIST_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+# Check ./dist first (Railway/production), then ../frontend/dist (local dev)
+_base = os.path.dirname(__file__)
+DIST_DIR = (
+    os.path.join(_base, "dist")
+    if os.path.isdir(os.path.join(_base, "dist"))
+    else os.path.join(_base, "..", "frontend", "dist")
+)
 
 if os.path.isdir(DIST_DIR):
     app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, "assets")), name="assets")
