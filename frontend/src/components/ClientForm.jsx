@@ -57,7 +57,33 @@ export default function ClientForm({ client, onClose, onSaved, inline }) {
 
   const handle = e => {
     const { name, value, type, checked } = e.target
-    setForm(f => ({ ...f, [name]: type === 'checkbox' ? checked : value }))
+    const newVal = type === 'checkbox' ? checked : value
+
+    setForm(f => {
+      const updated = { ...f, [name]: newVal }
+
+      if (name === 'pan') {
+        updated.it_portal_user_id = newVal
+        const dob = f.date_of_incorporation_birth
+        if (dob) {
+          const [y, m, d] = dob.split('-')
+          updated.password_ais_tis = newVal.toLowerCase() + d + m + y
+        }
+      }
+
+      if (name === 'tan') {
+        updated.it_portal_user_id_tds = newVal
+      }
+
+      if (name === 'date_of_incorporation_birth' && newVal) {
+        const [y, m, d] = newVal.split('-')
+        const ddmmyyyy = d + m + y
+        updated.password_26as = ddmmyyyy
+        updated.password_ais_tis = (f.pan || '').toLowerCase() + ddmmyyyy
+      }
+
+      return updated
+    })
   }
 
   const submit = async e => {
