@@ -241,9 +241,10 @@ r += 1; field(ws2, r, "EWB User ID",         "Text",           "No",  "E-Way Bil
 r += 1; field(ws2, r, "EWB Password",        "Password",       "No",  None, None)
 r += 1; field(ws2, r, "EWB API User ID",     "Text",           "No",  "For API-based E-Way Bill generation", "DSNHP3424014000")
 r += 1; field(ws2, r, "EWB API Password",    "Password",       "No",  None, "Admin@2025")
-r += 1; sec(ws2, r, "── AUTHORISED SIGNATORY")
-r += 1; field(ws2, r, "Authorised Signatory", "Text",          "No",  "Name of the authorised signatory for this GSTIN", "Rajesh Gupta")
-r += 1; field(ws2, r, "Signatory PAN",        "Text",          "No",  "PAN of the authorised signatory", "ABCPG1234D")
+r += 1; sec(ws2, r, "── AUTHORISED SIGNATORY  [One row per signatory — repeat GST Reg. ID for multiple signatories]")
+r += 1; field(ws2, r, "Signatory Client ID",  "Link → Clients", "No",  "Client ID of the Individual who is authorised signatory — links to their record in Sheet 1", "auto-linked")
+r += 1; field(ws2, r, "Signatory Name",        "Text",           "No",  "Auto-fetched from linked Client record (Legal Name)", "Rajesh Gupta")
+r += 1; field(ws2, r, "Signatory PAN",         "Text",           "No",  "Auto-fetched from linked Client record (PAN)", "ABCPG1234D")
 r += 1; sec(ws2, r, "── NOTES")
 r += 1; field(ws2, r, "Notes", "Long Text", "No", "e.g. Filing frequency, special instructions", None)
 freeze_and_filter(ws2)
@@ -258,10 +259,9 @@ r = 1
 write_row(ws3, r, COLS,
           fonts=[Font(bold=True, color=HDR_FG, size=10)] * 5,
           fills=[PatternFill("solid", fgColor=HDR_BG)] * 5)
-r += 1; field(ws3, r, "Director Record ID",     "Auto (UUID)",    "Yes", "System generated", "auto-generated")
 r += 1; field(ws3, r, "Company Client ID",       "Link → Clients", "Yes", "Client ID of the Company (Constitution = Company)", "auto-linked")
 r += 1; field(ws3, r, "Individual Client ID",    "Link → Clients", "Yes", "Client ID of the Director (Constitution = Individual) — single source of truth for this person's KYC", "auto-linked")
-r += 1; field(ws3, r, "DIN",                     "Text (8 char)",  "Yes", "Director Identification Number — auto-fetched from the Individual's Client record", "01234567")
+r += 1; field(ws3, r, "DIN",                     "Text (8 char)",  "Yes", "Director Identification Number — DIN is the director's unique identifier; auto-fetched from the Individual's Client record", "01234567")
 r += 1; field(ws3, r, "Designation",             "Dropdown",       "Yes", "Director | Managing Director | Whole-time Director | Independent Director | Nominee Director | Additional Director", "Director")
 r += 1; field(ws3, r, "Date of Appointment",     "Date",           "No",  None, "01/04/2015")
 r += 1; field(ws3, r, "Date of Cessation",       "Date",           "No",  "Leave blank if currently active", None)
@@ -280,7 +280,7 @@ r = 1
 write_row(ws4, r, COLS,
           fonts=[Font(bold=True, color=HDR_FG, size=10)] * 5,
           fills=[PatternFill("solid", fgColor=HDR_BG)] * 5)
-r += 1; field(ws4, r, "Shareholder ID",         "Auto (UUID)",    "Yes", "System generated", "auto-generated")
+r += 1; field(ws4, r, "Shareholding Record ID",  "Auto (UUID)",    "Yes", "System-generated primary key for this shareholding record — needed because the same person can hold shares in multiple companies, and shares can be acquired in multiple tranches over time", "auto-generated")
 r += 1; field(ws4, r, "Company Client ID",       "Link → Clients", "Yes", "Client ID of the Company whose shares are held", "auto-linked")
 r += 1; field(ws4, r, "Holder Type",             "Dropdown",       "Yes", "Individual | Company | Trust | HUF | LLP", "Individual")
 r += 1; field(ws4, r, "Individual Client ID",    "Link → Clients", "No",  "Fill if Holder Type = Individual — links to that person's single Client record", "auto-linked")
@@ -306,7 +306,7 @@ r = 1
 write_row(ws5, r, COLS,
           fonts=[Font(bold=True, color=HDR_FG, size=10)] * 5,
           fills=[PatternFill("solid", fgColor=HDR_BG)] * 5)
-r += 1; field(ws5, r, "Partner Record ID",      "Auto (UUID)",    "Yes", "System generated", "auto-generated")
+r += 1; field(ws5, r, "Partnership Record ID",   "Auto (UUID)",    "Yes", "System-generated primary key for this partnership record — needed because the same person can be a partner in multiple firms/LLPs, and profit ratios can change over time creating new records", "auto-generated")
 r += 1; field(ws5, r, "Firm / LLP Client ID",   "Link → Clients", "Yes", "Client ID of the Firm or LLP (Constitution = Partnership Firm or LLP)", "auto-linked")
 r += 1; field(ws5, r, "Individual Client ID",   "Link → Clients", "Yes", "Client ID of the Partner (Constitution = Individual) — single source of truth for this person's KYC", "auto-linked")
 r += 1; field(ws5, r, "Role",                   "Dropdown",       "Yes", "Partner | Designated Partner | Managing Partner | Sleeping Partner | Minor Partner", "Designated Partner")
@@ -381,7 +381,7 @@ write_row(ws8, r, COLS,
           fills=[PatternFill("solid", fgColor=HDR_BG)] * 5)
 r += 1; field(ws8, r, "Registration ID",        "Auto (UUID)",    "Yes", "System generated", "auto-generated")
 r += 1; field(ws8, r, "Client ID",              "Link → Clients", "Yes", "The client this registration belongs to", "auto-linked")
-r += 1; field(ws8, r, "Registration Type",      "Dropdown",       "Yes", "TAN | MSME/Udyam | IEC | FSSAI | Professional Tax | Shops & Estab | Trade License | Drug License | Import Export Code | Others", "MSME/Udyam")
+r += 1; field(ws8, r, "Registration Type",      "Dropdown",       "Yes", "MSME/Udyam | IEC | FSSAI | Professional Tax | Shops & Estab | Trade License | Drug License | Import Export Code | Others  [Note: TAN is captured in Sheet 1 — Clients (Master)]", "MSME/Udyam")
 r += 1; field(ws8, r, "Registration Number",    "Text",           "Yes", "Unique registration/certificate number", "UDYAM-DL-01-0012345")
 r += 1; field(ws8, r, "Registration Date",      "Date",           "No",  None, "15/06/2021")
 r += 1; field(ws8, r, "Valid Until",            "Date",           "No",  "For licenses with expiry — system will alert before expiry", "14/06/2026")
