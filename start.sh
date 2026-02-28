@@ -1,12 +1,15 @@
 #!/bin/bash
 set -e
 
-echo "=== Building frontend ==="
-cd frontend
-npm ci
-npm run build
-cp -r dist ../backend/dist
-cd ..
+# Build frontend only if not already built (e.g. during Docker build)
+if [ ! -d "backend/dist" ]; then
+  echo "=== Building frontend ==="
+  cd frontend
+  npm ci
+  npm run build
+  cp -r dist ../backend/dist
+  cd ..
+fi
 
 echo "=== Seeding database ==="
 cd backend
