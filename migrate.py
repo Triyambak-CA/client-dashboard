@@ -1,7 +1,7 @@
 import psycopg2
 
 SRC = "postgresql://postgres:OHcmLcdcywLpGAWNUePDhLqnNtAeaqnH@shuttle.proxy.rlwy.net:37056/railway"
-DST = "postgresql://postgres:MyDB@2024@localhost:5432/ca_clients"
+DST = "postgresql://postgres:MyDB%402024@localhost:5432/ca_clients"
 
 src = psycopg2.connect(SRC)
 dst = psycopg2.connect(DST)
