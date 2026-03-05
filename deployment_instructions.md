@@ -72,7 +72,8 @@ bash setup-gce-ssh.sh
 
 The script will:
 - Generate an ED25519 key pair at `~/.ssh/github_actions_deploy`
-- Append the public key to `~/.ssh/authorized_keys` (survives reboots)
+- Add the public key to **GCP instance metadata** under `ssh-keys` (the guest-agent syncs this into `authorized_keys` on every boot — truly permanent)
+- Also append the public key to `~/.ssh/authorized_keys` as a fallback
 - Print the **private key** — copy the entire output including the `-----BEGIN/END-----` lines
 
 #### Step 2 — Add secrets to GitHub

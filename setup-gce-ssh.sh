@@ -7,8 +7,9 @@
 #
 # What it does:
 #   1. Generates an ED25519 key pair at ~/.ssh/github_actions_deploy
-#   2. Adds the public key to ~/.ssh/authorized_keys (persistent across reboots)
-#   3. Prints the private key — paste it into GitHub → Settings → Secrets → GCE_SSH_KEY
+#   2. Adds the public key to GCP instance metadata (survives guest-agent resets)
+#   3. Adds the public key to ~/.ssh/authorized_keys as a fallback
+#   4. Prints the private key — paste it into GitHub → Settings → Secrets → GCE_SSH_KEY
 
 set -e
 
@@ -27,8 +28,54 @@ else
 fi
 
 PUBLIC_KEY=$(cat "${KEY_FILE}.pub")
+USERNAME=$(whoami)
 
-# Add public key to authorized_keys if not already present
+# ---------------------------------------------------------------------------
+# Step 1 — Add to GCP instance metadata (persistent, managed by guest-agent)
+# This is the authoritative method on GCP: the guest-agent syncs metadata
+# ssh-keys into authorized_keys on every boot, so this survives reboots and
+# guest-agent resets.
+# ---------------------------------------------------------------------------
+if command -v gcloud &>/dev/null; then
+  INSTANCE_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/name" \
+    -H "Metadata-Flavor: Google" 2>/dev/null || echo "")
+  ZONE=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/zone" \
+    -H "Metadata-Flavor: Google" 2>/dev/null | awk -F/ '{print $NF}' || echo "")
+
+  if [ -n "$INSTANCE_NAME" ] && [ -n "$ZONE" ]; then
+    # Fetch current ssh-keys metadata, append ours if not already present
+    EXISTING=$(gcloud compute instances describe "$INSTANCE_NAME" \
+      --zone="$ZONE" \
+      --format="value(metadata.ssh-keys)" 2>/dev/null || echo "")
+
+    ENTRY="${USERNAME}:${PUBLIC_KEY}"
+    if echo "$EXISTING" | grep -qF "$PUBLIC_KEY"; then
+      echo "[INFO] Public key already in GCP instance metadata — skipping."
+    else
+      # Build updated value
+      if [ -n "$EXISTING" ]; then
+        NEW_VALUE="${EXISTING}
+${ENTRY}"
+      else
+        NEW_VALUE="$ENTRY"
+      fi
+      printf '%s' "$NEW_VALUE" > /tmp/gcp_ssh_keys.txt
+      gcloud compute instances add-metadata "$INSTANCE_NAME" \
+        --zone="$ZONE" \
+        --metadata-from-file ssh-keys=/tmp/gcp_ssh_keys.txt
+      rm -f /tmp/gcp_ssh_keys.txt
+      echo "[OK] Public key added to GCP instance metadata (zone: $ZONE)."
+    fi
+  else
+    echo "[WARN] Could not detect instance name/zone — skipping GCP metadata step."
+  fi
+else
+  echo "[WARN] gcloud not found — skipping GCP metadata step."
+fi
+
+# ---------------------------------------------------------------------------
+# Step 2 — Also add to authorized_keys directly as a fallback
+# ---------------------------------------------------------------------------
 mkdir -p "$HOME/.ssh"
 chmod 700 "$HOME/.ssh"
 touch "$AUTH_KEYS"
