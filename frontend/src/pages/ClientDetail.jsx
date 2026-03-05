@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { clientsApi } from '../api'
-import { ArrowLeft, Edit2, Eye, EyeOff } from 'lucide-react'
+import { clientsApi, gstApi, directorsApi, shareholdersApi, partnersApi, bankApi, epfEsiApi, otherRegApi } from '../api'
+import { ArrowLeft, Edit2, Eye, EyeOff, Copy, Check } from 'lucide-react'
 import GSTTab          from '../components/tabs/GSTTab'
 import DirectorsTab    from '../components/tabs/DirectorsTab'
 import ShareholdersTab from '../components/tabs/ShareholdersTab'
@@ -10,6 +10,8 @@ import BankTab         from '../components/tabs/BankTab'
 import EPFESITab       from '../components/tabs/EPFESITab'
 import OtherRegTab     from '../components/tabs/OtherRegTab'
 import ClientForm      from '../components/ClientForm'
+import ExportMenu      from '../components/ExportMenu'
+import { exportFullClientPDF, exportFullClientExcel, exportSectionPDF, exportSectionExcel } from '../utils/exportClient'
 
 const CONSTITUTION_COLORS = {
   'Individual':       'bg-blue-100 text-blue-700',
@@ -22,30 +24,62 @@ const CONSTITUTION_COLORS = {
   'BOI':              'bg-rose-100 text-rose-700',
 }
 
+function CopyBtn({ value }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(value || '')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+  return (
+    <button
+      onClick={copy}
+      title="Copy"
+      className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-gray-600 ml-0.5 flex-shrink-0"
+    >
+      {copied
+        ? <Check size={11} className="text-green-500" />
+        : <Copy size={11} />
+      }
+    </button>
+  )
+}
+
 function Field({ label, value, secret }) {
   const [show, setShow] = useState(false)
   if (!value) return null
   return (
     <div>
       <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-0.5">{label}</p>
-      <div className="flex items-center gap-1">
-        <p className="text-sm text-gray-900 font-mono">
+      <div className="flex items-center gap-1 group">
+        <p className="text-sm text-gray-900 font-mono break-all">
           {secret && !show ? '••••••••' : value}
         </p>
         {secret && (
-          <button onClick={() => setShow(s => !s)} className="text-gray-400 hover:text-gray-600">
+          <button onClick={() => setShow(s => !s)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
             {show ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
         )}
+        <CopyBtn value={value} />
       </div>
     </div>
   )
 }
 
-function Section({ title, children }) {
+function Section({ title, children, onExportPDF, onExportExcel }) {
   return (
     <div className="mb-6">
-      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3 pb-1 border-b border-gray-100">{title}</h3>
+      <div className="flex items-center justify-between mb-3 pb-1 border-b border-gray-100">
+        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">{title}</h3>
+        {(onExportPDF || onExportExcel) && (
+          <ExportMenu
+            small
+            label="Export"
+            onExportPDF={onExportPDF}
+            onExportExcel={onExportExcel}
+          />
+        )}
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-4">{children}</div>
     </div>
   )
@@ -91,6 +125,65 @@ export default function ClientDetail() {
     { key: 'otherreg',     label: 'Other Registrations' },
   ]
 
+  // ── Fetchers for full export ──────────────────────────────────────────────
+  const fetchers = {
+    gst:          () => gstApi.list(id).then(r => r.data),
+    directors:    () => directorsApi.list({ company_client_id: id }).then(r => r.data),
+    shareholders: () => shareholdersApi.list(id).then(r => r.data),
+    partners:     () => partnersApi.list(id).then(r => r.data),
+    bank:         () => bankApi.list(id).then(r => r.data),
+    epfesi:       () => epfEsiApi.list(id).then(r => r.data),
+    otherReg:     () => otherRegApi.list(id).then(r => r.data),
+  }
+
+  // ── Section export helpers (overview / kyc / credentials) ────────────────
+  const overviewRows = [
+    [client.pan,          'PAN'],
+    [client.constitution, 'Constitution'],
+    [client.cin_llpin,    'CIN / LLPIN'],
+    [client.tan,          'TAN'],
+    [client.date_of_incorporation_birth, 'Date of Incorp / Birth'],
+    [client.client_since, 'Client Since'],
+    [client.primary_phone,  'Primary Phone'],
+    [client.secondary_phone,'Secondary Phone'],
+    [client.primary_email,  'Primary Email'],
+    [client.secondary_email,'Secondary Email'],
+    [[client.address_line1, client.address_line2, client.city, client.state, client.pin_code].filter(Boolean).join(', '), 'Address'],
+    [client.is_direct_client ? 'Yes' : 'No', 'Direct Client'],
+    [client.is_on_retainer   ? 'Yes' : 'No', 'On Retainer'],
+    [client.is_active        ? 'Yes' : 'No', 'Active'],
+    [client.notes, 'Notes'],
+  ].filter(([val]) => val).map(([val, label]) => [label, val])
+
+  const kycRows = [
+    [client.father_name, "Father's Name"],
+    [client.mother_name, "Mother's Name"],
+    [client.gender, 'Gender'],
+    [client.nationality, 'Nationality'],
+    [client.aadhaar_no, 'Aadhaar No.'],
+    [client.din, 'DIN'],
+    [client.passport_no, 'Passport No.'],
+    [client.passport_expiry, 'Passport Expiry'],
+    [client.mca_user_id, 'MCA User ID'],
+    [client.mca_password, 'MCA Password'],
+    [client.dsc_provider, 'DSC Provider'],
+    [client.dsc_expiry_date, 'DSC Expiry Date'],
+    [client.dsc_token_password, 'DSC Token Password'],
+  ].filter(([val]) => val).map(([val, label]) => [label, val])
+
+  const credRows = [
+    [client.it_portal_user_id, 'IT Portal User ID'],
+    [client.it_portal_password, 'IT Portal Password'],
+    [client.it_portal_user_id_tds, 'IT Portal User ID (TDS)'],
+    [client.it_password_tds, 'IT Password (TDS)'],
+    [client.password_26as, 'Password for 26AS'],
+    [client.password_ais_tis, 'Password for AIS / TIS'],
+    [client.traces_user_id_deductor, 'TRACES User ID (Deductor)'],
+    [client.traces_password_deductor, 'TRACES Password (Deductor)'],
+    [client.traces_user_id_taxpayer, 'TRACES User ID (Tax Payer)'],
+    [client.traces_password_taxpayer, 'TRACES Password (Tax Payer)'],
+  ].filter(([val]) => val).map(([val, label]) => [label, val])
+
   return (
     <div className="p-6">
       {/* Back + Header */}
@@ -100,7 +193,7 @@ export default function ClientDetail() {
             <ArrowLeft size={18} className="text-gray-500" />
           </button>
           <div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold text-gray-900">{client.display_name}</h1>
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${CONSTITUTION_COLORS[client.constitution] || 'bg-gray-100 text-gray-700'}`}>
                 {client.constitution}
@@ -111,12 +204,19 @@ export default function ClientDetail() {
             <p className="text-gray-500 text-sm mt-1">{client.legal_name} &nbsp;·&nbsp; PAN: <span className="font-mono">{client.pan}</span></p>
           </div>
         </div>
-        <button
-          onClick={() => setEditing(true)}
-          className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          <Edit2 size={14} /> Edit
-        </button>
+        <div className="flex items-center gap-2">
+          <ExportMenu
+            label="Export All"
+            onExportPDF={() => exportFullClientPDF(client, fetchers)}
+            onExportExcel={() => exportFullClientExcel(client, fetchers)}
+          />
+          <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-2 border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Edit2 size={14} /> Edit
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -142,7 +242,11 @@ export default function ClientDetail() {
       <div>
         {tab === 'overview' && (
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <Section title="Identity">
+            <Section
+              title="Identity"
+              onExportPDF={() => exportSectionPDF({ client, title: 'Overview', head: ['Field', 'Value'], rows: overviewRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'Overview', head: ['Field', 'Value'], rows: overviewRows })}
+            >
               <Field label="PAN"                         value={client.pan} />
               <Field label="Constitution"                value={client.constitution} />
               <Field label="CIN / LLPIN"                 value={client.cin_llpin} />
@@ -174,16 +278,20 @@ export default function ClientDetail() {
 
         {tab === 'kyc' && isIndividual && (
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <Section title="Personal Identity">
+            <Section
+              title="Personal Identity"
+              onExportPDF={() => exportSectionPDF({ client, title: 'KYC & DSC', head: ['Field', 'Value'], rows: kycRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'KYC & DSC', head: ['Field', 'Value'], rows: kycRows })}
+            >
               <Field label="Father's Name" value={client.father_name} />
               <Field label="Mother's Name" value={client.mother_name} />
               <Field label="Gender"        value={client.gender} />
               <Field label="Nationality"   value={client.nationality} />
             </Section>
             <Section title="KYC Numbers">
-              <Field label="Aadhaar No."   value={client.aadhaar_no} />
-              <Field label="DIN"           value={client.din} />
-              <Field label="Passport No."  value={client.passport_no} />
+              <Field label="Aadhaar No."     value={client.aadhaar_no} />
+              <Field label="DIN"             value={client.din} />
+              <Field label="Passport No."    value={client.passport_no} />
               <Field label="Passport Expiry" value={client.passport_expiry} />
             </Section>
             <Section title="MCA v3 Login">
@@ -200,7 +308,11 @@ export default function ClientDetail() {
 
         {tab === 'credentials' && (
           <div className="bg-white rounded-xl border border-gray-200 p-6">
-            <Section title="Income Tax Portal">
+            <Section
+              title="Income Tax Portal"
+              onExportPDF={() => exportSectionPDF({ client, title: 'Credentials', head: ['Field', 'Value'], rows: credRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'Credentials', head: ['Field', 'Value'], rows: credRows })}
+            >
               <Field label="IT Portal User ID"            value={client.it_portal_user_id} />
               <Field label="IT Portal Password"           value={client.it_portal_password} secret />
               <Field label="IT Portal User ID (TDS)"      value={client.it_portal_user_id_tds} />
@@ -217,13 +329,13 @@ export default function ClientDetail() {
           </div>
         )}
 
-        {tab === 'gst'         && <GSTTab          clientId={id} />}
-        {tab === 'directors'   && <DirectorsTab     clientId={id} companyId={id} />}
-        {tab === 'shareholders'&& <ShareholdersTab  clientId={id} />}
-        {tab === 'partners'    && <PartnersTab      clientId={id} />}
-        {tab === 'bank'        && <BankTab          clientId={id} />}
-        {tab === 'epfesi'      && <EPFESITab        clientId={id} />}
-        {tab === 'otherreg'    && <OtherRegTab      clientId={id} />}
+        {tab === 'gst'          && <GSTTab          clientId={id} client={client} />}
+        {tab === 'directors'    && <DirectorsTab     clientId={id} companyId={id} client={client} />}
+        {tab === 'shareholders' && <ShareholdersTab  clientId={id} client={client} />}
+        {tab === 'partners'     && <PartnersTab      clientId={id} client={client} />}
+        {tab === 'bank'         && <BankTab          clientId={id} client={client} />}
+        {tab === 'epfesi'       && <EPFESITab        clientId={id} client={client} />}
+        {tab === 'otherreg'     && <OtherRegTab      clientId={id} client={client} />}
       </div>
 
       {/* Edit modal */}

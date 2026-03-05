@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { gstApi, clientsApi } from '../../api'
 import Modal from '../Modal'
+import ExportMenu from '../ExportMenu'
+import { exportSectionPDF, exportSectionExcel } from '../../utils/exportClient'
 import { Plus, Trash2, Edit2, Eye, EyeOff, UserPlus, UserMinus } from 'lucide-react'
 
 const GST_TYPES = ['Regular', 'Composition', 'QRMP', 'SEZ Unit', 'SEZ Developer', 'Casual', 'Non-Resident']
@@ -18,19 +20,19 @@ function PwdField({ value }) {
   )
 }
 
-export default function GSTTab({ clientId }) {
+export default function GSTTab({ clientId, client }) {
   const [records, setRecords]   = useState([])
   const [loading, setLoading]   = useState(true)
-  const [modal,   setModal]     = useState(null) // null | 'add' | 'edit' | 'signatory'
+  const [modal,   setModal]     = useState(null)
   const [editing, setEditing]   = useState(null)
-  const [sigGst,  setSigGst]    = useState(null) // selected gst record for signatory mgmt
+  const [sigGst,  setSigGst]    = useState(null)
   const [form,    setForm]      = useState({})
   const [sigClientId, setSigClientId] = useState('')
   const [clients, setClients]   = useState([])
   const [saving,  setSaving]    = useState(false)
   const [error,   setError]     = useState('')
 
-  const fetch = async () => {
+  const fetchRecords = async () => {
     try { const r = await gstApi.list(clientId); setRecords(r.data) }
     catch (e) { console.error(e) }
     finally { setLoading(false) }
@@ -40,9 +42,9 @@ export default function GSTTab({ clientId }) {
     catch {}
   }
 
-  useEffect(() => { fetch(); fetchClients() }, [clientId])
+  useEffect(() => { fetchRecords(); fetchClients() }, [clientId])
 
-  const openAdd = () => { setForm({ client_id: clientId, is_active: true }); setEditing(null); setModal('add') }
+  const openAdd  = () => { setForm({ client_id: clientId, is_active: true }); setEditing(null); setModal('add') }
   const openEdit = rec => { setForm({ ...rec }); setEditing(rec); setModal('edit') }
 
   const save = async e => {
@@ -50,38 +52,57 @@ export default function GSTTab({ clientId }) {
     try {
       if (editing) await gstApi.update(editing.id, form)
       else          await gstApi.create(form)
-      setModal(null); fetch()
+      setModal(null); fetchRecords()
     } catch (err) { setError(err.response?.data?.detail || 'Error') }
     finally { setSaving(false) }
   }
 
   const del = async id => {
     if (!confirm('Delete this GST registration?')) return
-    await gstApi.delete(id); fetch()
+    await gstApi.delete(id); fetchRecords()
   }
 
   const addSignatory = async e => {
     e.preventDefault(); setSaving(true); setError('')
-    try { await gstApi.addSignatory(sigGst.id, sigClientId); const r = await gstApi.get(sigGst.id); setSigGst(r.data); fetch() }
-    catch (err) { setError(err.response?.data?.detail || 'Error') }
+    try {
+      await gstApi.addSignatory(sigGst.id, sigClientId)
+      const r = await gstApi.get(sigGst.id); setSigGst(r.data); fetchRecords()
+    } catch (err) { setError(err.response?.data?.detail || 'Error') }
     finally { setSaving(false) }
   }
 
   const removeSignatory = async (gstId, sigId) => {
     if (!confirm('Remove this signatory?')) return
     await gstApi.removeSignatory(gstId, sigId)
-    const r = await gstApi.get(gstId); setSigGst(r.data); fetch()
+    const r = await gstApi.get(gstId); setSigGst(r.data); fetchRecords()
   }
 
   const h = e => setForm(f => ({ ...f, [e.target.name]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }))
+
+  const exportHead = ['GSTIN', 'State', 'Type', 'Reg Date', 'User ID', 'Password', 'EWB User ID', 'EWB Pwd', 'Status', 'Signatories']
+  const exportRows = records.map(r => [
+    r.gstin, r.state, r.registration_type, r.registration_date,
+    r.gst_user_id, r.gst_password, r.ewb_user_id, r.ewb_password,
+    r.is_active ? 'Active' : 'Inactive',
+    r.signatories?.map(s => `${s.signatory_name} (${s.signatory_pan})`).join('; ') || '—',
+  ])
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-700">GST Registrations</h3>
-        <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
-          <Plus size={13} /> Add GSTIN
-        </button>
+        <div className="flex items-center gap-2">
+          {records.length > 0 && client && (
+            <ExportMenu
+              small label="Export"
+              onExportPDF={() => exportSectionPDF({ client, title: 'GST Registrations', head: exportHead, rows: exportRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'GST Registrations', head: exportHead, rows: exportRows })}
+            />
+          )}
+          <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
+            <Plus size={13} /> Add GSTIN
+          </button>
+        </div>
       </div>
 
       {loading ? <p className="text-gray-400 text-sm">Loading…</p> : records.length === 0 ? (
@@ -140,22 +161,16 @@ export default function GSTTab({ clientId }) {
         <Modal title={modal === 'edit' ? 'Edit GST Registration' : 'Add GST Registration'} onClose={() => setModal(null)}>
           <form onSubmit={save} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              {[
-                ['GSTIN *', 'gstin', 'text', true],
-                ['State', 'state', 'text'],
-                ['State Code (2 digits)', 'state_code', 'text'],
-                ['Registration Date', 'registration_date', 'date'],
-                ['Cancellation Date', 'cancellation_date', 'date'],
-              ].map(([label, name, type, req]) => (
+              {[['GSTIN *', 'gstin', 'text', true], ['State', 'state', 'text'], ['State Code (2 digits)', 'state_code', 'text'], ['Registration Date', 'registration_date', 'date'], ['Cancellation Date', 'cancellation_date', 'date']].map(([label, name, type, req]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={type||'text'} name={name} value={form[name]||''} onChange={h} required={req}
+                  <input type={type || 'text'} name={name} value={form[name] || ''} onChange={h} required={req}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Registration Type</label>
-                <select name="registration_type" value={form.registration_type||''} onChange={h}
+                <select name="registration_type" value={form.registration_type || ''} onChange={h}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— select —</option>
                   {GST_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
@@ -165,10 +180,10 @@ export default function GSTTab({ clientId }) {
             <hr className="my-2" />
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">GST Portal Credentials</p>
             <div className="grid grid-cols-2 gap-3">
-              {[['GST User ID','gst_user_id'],['GST Password','gst_password'],['EWB User ID','ewb_user_id'],['EWB Password','ewb_password'],['EWB API User ID','ewb_api_user_id'],['EWB API Password','ewb_api_password']].map(([label, name]) => (
+              {[['GST User ID', 'gst_user_id'], ['GST Password', 'gst_password'], ['EWB User ID', 'ewb_user_id'], ['EWB Password', 'ewb_password'], ['EWB API User ID', 'ewb_api_user_id'], ['EWB API Password', 'ewb_api_password']].map(([label, name]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={name.includes('password') ? 'password' : 'text'} name={name} value={form[name]||''} onChange={h}
+                  <input type={name.includes('password') ? 'password' : 'text'} name={name} value={form[name] || ''} onChange={h}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
@@ -179,7 +194,7 @@ export default function GSTTab({ clientId }) {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-              <textarea name="notes" value={form.notes||''} onChange={h} rows={2}
+              <textarea name="notes" value={form.notes || ''} onChange={h} rows={2}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             {error && <p className="text-red-600 text-xs bg-red-50 px-3 py-2 rounded">{error}</p>}

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { otherRegApi } from '../../api'
 import Modal from '../Modal'
+import ExportMenu from '../ExportMenu'
+import { exportSectionPDF, exportSectionExcel } from '../../utils/exportClient'
 import { Plus, Trash2, Edit2, Eye, EyeOff, AlertTriangle } from 'lucide-react'
 
 const REG_TYPES = ['MSME/Udyam','IEC','FSSAI','Professional Tax','Shops & Estab','Trade License','Drug License','Import Export Code','Others']
@@ -29,7 +31,7 @@ function isExpired(dateStr) {
   return new Date(dateStr) < new Date()
 }
 
-export default function OtherRegTab({ clientId }) {
+export default function OtherRegTab({ clientId, client }) {
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal,   setModal]   = useState(false)
@@ -38,12 +40,12 @@ export default function OtherRegTab({ clientId }) {
   const [saving,  setSaving]  = useState(false)
   const [error,   setError]   = useState('')
 
-  const fetch = async () => {
+  const fetchRecords = async () => {
     try { const r = await otherRegApi.list(clientId); setRecords(r.data) }
     catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
-  useEffect(() => { fetch() }, [clientId])
+  useEffect(() => { fetchRecords() }, [clientId])
 
   const openAdd  = () => { setForm({ client_id: clientId, is_active: true }); setEditing(null); setModal(true) }
   const openEdit = rec => { setForm({ ...rec }); setEditing(rec); setModal(true) }
@@ -54,24 +56,37 @@ export default function OtherRegTab({ clientId }) {
     try {
       if (editing) await otherRegApi.update(editing.id, form)
       else          await otherRegApi.create(form)
-      setModal(false); fetch()
+      setModal(false); fetchRecords()
     } catch (err) { setError(err.response?.data?.detail || 'Error') }
     finally { setSaving(false) }
   }
 
   const del = async id => {
     if (!confirm('Delete this registration?')) return
-    await otherRegApi.delete(id); fetch()
+    await otherRegApi.delete(id); fetchRecords()
   }
+
+  const exportHead = ['Type', 'Reg. Number', 'Reg Date', 'Valid Until', 'Issuing Authority', 'State/Jurisdiction', 'Portal ID', 'Password', 'Status', 'Notes']
+  const exportRows = records.map(r => [r.registration_type, r.registration_number, r.registration_date, r.valid_until, r.issuing_authority, r.state_jurisdiction, r.portal_user_id, r.portal_password, r.is_active ? 'Active' : 'Inactive', r.notes])
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-700">Other Registrations</h3>
-        <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
-          <Plus size={13} /> Add
-        </button>
+        <div className="flex items-center gap-2">
+          {records.length > 0 && client && (
+            <ExportMenu
+              small label="Export"
+              onExportPDF={() => exportSectionPDF({ client, title: 'Other Registrations', head: exportHead, rows: exportRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'Other Registrations', head: exportHead, rows: exportRows })}
+            />
+          )}
+          <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
+            <Plus size={13} /> Add
+          </button>
+        </div>
       </div>
+
       {loading ? <p className="text-gray-400 text-sm">Loading…</p> : records.length === 0 ? (
         <p className="text-gray-400 text-sm text-center py-8">No registrations added yet</p>
       ) : (
@@ -119,7 +134,7 @@ export default function OtherRegTab({ clientId }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Registration Type *</label>
-                <select name="registration_type" value={form.registration_type||''} onChange={h} required
+                <select name="registration_type" value={form.registration_type || ''} onChange={h} required
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— select —</option>
                   {REG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
@@ -127,28 +142,28 @@ export default function OtherRegTab({ clientId }) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Registration Number *</label>
-                <input type="text" name="registration_number" value={form.registration_number||''} onChange={h} required
+                <input type="text" name="registration_number" value={form.registration_number || ''} onChange={h} required
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              {[['Registration Date','registration_date','date'],['Valid Until','valid_until','date'],['Issuing Authority','issuing_authority','text']].map(([label,name,type]) => (
+              {[['Registration Date', 'registration_date', 'date'], ['Valid Until', 'valid_until', 'date'], ['Issuing Authority', 'issuing_authority', 'text']].map(([label, name, type]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={type} name={name} value={form[name]||''} onChange={h}
+                  <input type={type} name={name} value={form[name] || ''} onChange={h}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">State / Jurisdiction</label>
-                <select name="state_jurisdiction" value={form.state_jurisdiction||''} onChange={h}
+                <select name="state_jurisdiction" value={form.state_jurisdiction || ''} onChange={h}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— select —</option>
                   {STATES.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
-              {[['Portal User ID','portal_user_id','text'],['Portal Password','portal_password','password']].map(([label,name,type]) => (
+              {[['Portal User ID', 'portal_user_id', 'text'], ['Portal Password', 'portal_password', 'password']].map(([label, name, type]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={type} name={name} value={form[name]||''} onChange={h}
+                  <input type={type} name={name} value={form[name] || ''} onChange={h}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
@@ -159,7 +174,7 @@ export default function OtherRegTab({ clientId }) {
             </label>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-              <textarea name="notes" value={form.notes||''} onChange={h} rows={2}
+              <textarea name="notes" value={form.notes || ''} onChange={h} rows={2}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             {error && <p className="text-red-600 text-xs bg-red-50 px-3 py-2 rounded">{error}</p>}

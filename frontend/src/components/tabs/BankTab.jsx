@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { bankApi } from '../../api'
 import Modal from '../Modal'
+import ExportMenu from '../ExportMenu'
+import { exportSectionPDF, exportSectionExcel } from '../../utils/exportClient'
 import { Plus, Trash2, Edit2, Eye, EyeOff } from 'lucide-react'
 
 const ACCOUNT_TYPES = ['Current', 'Savings', 'Cash Credit', 'Overdraft', 'EEFC']
@@ -18,7 +20,7 @@ function PwdCell({ value }) {
   )
 }
 
-export default function BankTab({ clientId }) {
+export default function BankTab({ clientId, client }) {
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal,   setModal]   = useState(false)
@@ -27,12 +29,12 @@ export default function BankTab({ clientId }) {
   const [saving,  setSaving]  = useState(false)
   const [error,   setError]   = useState('')
 
-  const fetch = async () => {
+  const fetchRecords = async () => {
     try { const r = await bankApi.list(clientId); setRecords(r.data) }
     catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
-  useEffect(() => { fetch() }, [clientId])
+  useEffect(() => { fetchRecords() }, [clientId])
 
   const openAdd  = () => { setForm({ client_id: clientId, is_primary: false }); setEditing(null); setModal(true) }
   const openEdit = rec => { setForm({ ...rec }); setEditing(rec); setModal(true) }
@@ -43,24 +45,37 @@ export default function BankTab({ clientId }) {
     try {
       if (editing) await bankApi.update(editing.id, form)
       else          await bankApi.create(form)
-      setModal(false); fetch()
+      setModal(false); fetchRecords()
     } catch (err) { setError(err.response?.data?.detail || 'Error') }
     finally { setSaving(false) }
   }
 
   const del = async id => {
     if (!confirm('Delete this bank account?')) return
-    await bankApi.delete(id); fetch()
+    await bankApi.delete(id); fetchRecords()
   }
+
+  const exportHead = ['Bank', 'Account No.', 'IFSC', 'Branch', 'Type', 'Net Banking ID', 'Net Banking Password', 'Primary', 'Notes']
+  const exportRows = records.map(r => [r.bank_name, r.account_number, r.ifsc_code, r.branch_name, r.account_type, r.net_banking_user_id, r.net_banking_password, r.is_primary ? 'Yes' : 'No', r.notes])
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-700">Bank Accounts</h3>
-        <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
-          <Plus size={13} /> Add Account
-        </button>
+        <div className="flex items-center gap-2">
+          {records.length > 0 && client && (
+            <ExportMenu
+              small label="Export"
+              onExportPDF={() => exportSectionPDF({ client, title: 'Bank Accounts', head: exportHead, rows: exportRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'Bank Accounts', head: exportHead, rows: exportRows })}
+            />
+          )}
+          <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
+            <Plus size={13} /> Add Account
+          </button>
+        </div>
       </div>
+
       {loading ? <p className="text-gray-400 text-sm">Loading…</p> : records.length === 0 ? (
         <p className="text-gray-400 text-sm text-center py-8">No bank accounts added yet</p>
       ) : (
@@ -101,25 +116,25 @@ export default function BankTab({ clientId }) {
         <Modal title={editing ? 'Edit Bank Account' : 'Add Bank Account'} onClose={() => setModal(false)}>
           <form onSubmit={save} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              {[['Bank Name *','bank_name',true],['Account Number *','account_number',true],['IFSC Code *','ifsc_code',true],['Branch Name','branch_name',false]].map(([label,name,req]) => (
+              {[['Bank Name *', 'bank_name', true], ['Account Number *', 'account_number', true], ['IFSC Code *', 'ifsc_code', true], ['Branch Name', 'branch_name', false]].map(([label, name, req]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type="text" name={name} value={form[name]||''} onChange={h} required={req}
+                  <input type="text" name={name} value={form[name] || ''} onChange={h} required={req}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Account Type</label>
-                <select name="account_type" value={form.account_type||''} onChange={h}
+                <select name="account_type" value={form.account_type || ''} onChange={h}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— select —</option>
                   {ACCOUNT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              {[['Net Banking User ID','net_banking_user_id'],['Net Banking Password','net_banking_password']].map(([label,name]) => (
+              {[['Net Banking User ID', 'net_banking_user_id'], ['Net Banking Password', 'net_banking_password']].map(([label, name]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={name.includes('password') ? 'password' : 'text'} name={name} value={form[name]||''} onChange={h}
+                  <input type={name.includes('password') ? 'password' : 'text'} name={name} value={form[name] || ''} onChange={h}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
@@ -130,7 +145,7 @@ export default function BankTab({ clientId }) {
             </label>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-              <textarea name="notes" value={form.notes||''} onChange={h} rows={2}
+              <textarea name="notes" value={form.notes || ''} onChange={h} rows={2}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             {error && <p className="text-red-600 text-xs bg-red-50 px-3 py-2 rounded">{error}</p>}

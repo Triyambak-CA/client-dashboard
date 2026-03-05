@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { epfEsiApi } from '../../api'
 import Modal from '../Modal'
+import ExportMenu from '../ExportMenu'
+import { exportSectionPDF, exportSectionExcel } from '../../utils/exportClient'
 import { Plus, Trash2, Edit2, Eye, EyeOff } from 'lucide-react'
 
 const STATES = ['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Delhi','Other']
@@ -18,7 +20,7 @@ function PwdCell({ value }) {
   )
 }
 
-export default function EPFESITab({ clientId }) {
+export default function EPFESITab({ clientId, client }) {
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(true)
   const [modal,   setModal]   = useState(false)
@@ -27,12 +29,12 @@ export default function EPFESITab({ clientId }) {
   const [saving,  setSaving]  = useState(false)
   const [error,   setError]   = useState('')
 
-  const fetch = async () => {
+  const fetchRecords = async () => {
     try { const r = await epfEsiApi.list(clientId); setRecords(r.data) }
     catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
-  useEffect(() => { fetch() }, [clientId])
+  useEffect(() => { fetchRecords() }, [clientId])
 
   const openAdd  = () => { setForm({ client_id: clientId, registration_type: 'EPF', is_active: true }); setEditing(null); setModal(true) }
   const openEdit = rec => { setForm({ ...rec }); setEditing(rec); setModal(true) }
@@ -43,24 +45,37 @@ export default function EPFESITab({ clientId }) {
     try {
       if (editing) await epfEsiApi.update(editing.id, form)
       else          await epfEsiApi.create(form)
-      setModal(false); fetch()
+      setModal(false); fetchRecords()
     } catch (err) { setError(err.response?.data?.detail || 'Error') }
     finally { setSaving(false) }
   }
 
   const del = async id => {
     if (!confirm('Delete this EPF/ESI registration?')) return
-    await epfEsiApi.delete(id); fetch()
+    await epfEsiApi.delete(id); fetchRecords()
   }
+
+  const exportHead = ['Type', 'Estab. Code', 'State', 'Reg Date', 'Portal ID', 'Password', 'DSC Holder', 'Auth Signatory', 'Status', 'Notes']
+  const exportRows = records.map(r => [r.registration_type, r.establishment_code, r.state, r.registration_date, r.portal_user_id, r.portal_password, r.dsc_holder_name, r.authorised_signatory, r.is_active ? 'Active' : 'Inactive', r.notes])
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-700">EPF / ESI Registrations</h3>
-        <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
-          <Plus size={13} /> Add
-        </button>
+        <div className="flex items-center gap-2">
+          {records.length > 0 && client && (
+            <ExportMenu
+              small label="Export"
+              onExportPDF={() => exportSectionPDF({ client, title: 'EPF-ESI', head: exportHead, rows: exportRows })}
+              onExportExcel={() => exportSectionExcel({ client, title: 'EPF-ESI', head: exportHead, rows: exportRows })}
+            />
+          )}
+          <button onClick={openAdd} className="flex items-center gap-1.5 bg-[#1F3864] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#162848]">
+            <Plus size={13} /> Add
+          </button>
+        </div>
       </div>
+
       {loading ? <p className="text-gray-400 text-sm">Loading…</p> : records.length === 0 ? (
         <p className="text-gray-400 text-sm text-center py-8">No EPF/ESI registrations yet</p>
       ) : (
@@ -99,7 +114,7 @@ export default function EPFESITab({ clientId }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Type *</label>
-                <select name="registration_type" value={form.registration_type||'EPF'} onChange={h} required
+                <select name="registration_type" value={form.registration_type || 'EPF'} onChange={h} required
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="EPF">EPF</option>
                   <option value="ESI">ESI</option>
@@ -107,7 +122,7 @@ export default function EPFESITab({ clientId }) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">State</label>
-                <select name="state" value={form.state||''} onChange={h}
+                <select name="state" value={form.state || ''} onChange={h}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">— select —</option>
                   {STATES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -115,13 +130,13 @@ export default function EPFESITab({ clientId }) {
               </div>
               <div className="md:col-span-2">
                 <label className="block text-xs font-medium text-gray-600 mb-1">Establishment Code / Reg No. *</label>
-                <input type="text" name="establishment_code" value={form.establishment_code||''} onChange={h} required
+                <input type="text" name="establishment_code" value={form.establishment_code || ''} onChange={h} required
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              {[['Registration Date','registration_date','date'],['Cancellation Date','cancellation_date','date'],['Portal User ID','portal_user_id','text'],['Portal Password','portal_password','password'],['DSC Holder Name','dsc_holder_name','text'],['Authorised Signatory','authorised_signatory','text']].map(([label,name,type]) => (
+              {[['Registration Date', 'registration_date', 'date'], ['Cancellation Date', 'cancellation_date', 'date'], ['Portal User ID', 'portal_user_id', 'text'], ['Portal Password', 'portal_password', 'password'], ['DSC Holder Name', 'dsc_holder_name', 'text'], ['Authorised Signatory', 'authorised_signatory', 'text']].map(([label, name, type]) => (
                 <div key={name}>
                   <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-                  <input type={type} name={name} value={form[name]||''} onChange={h}
+                  <input type={type} name={name} value={form[name] || ''} onChange={h}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 </div>
               ))}
@@ -132,7 +147,7 @@ export default function EPFESITab({ clientId }) {
             </label>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
-              <textarea name="notes" value={form.notes||''} onChange={h} rows={2}
+              <textarea name="notes" value={form.notes || ''} onChange={h} rows={2}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             {error && <p className="text-red-600 text-xs bg-red-50 px-3 py-2 rounded">{error}</p>}
