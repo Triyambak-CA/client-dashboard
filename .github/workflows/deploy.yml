@@ -15,6 +15,7 @@ jobs:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd client-dashboard
             git pull origin main
