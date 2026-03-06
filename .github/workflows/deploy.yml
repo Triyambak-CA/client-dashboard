@@ -9,15 +9,39 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      - name: Copy frontend dist to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.GCE_HOST }}
+          username: ${{ secrets.GCE_USER }}
+          key: ${{ secrets.GCE_SSH_KEY }}
+          source: "frontend/dist"
+          target: "~/client-dashboard"
+
       - name: SSH into VM and redeploy
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
-          command_timeout: 30m
+          command_timeout: 10m
           script: |
             cd client-dashboard
             git pull origin main
-            cd frontend && npm ci && npm run build && cd ..
             docker compose up -d --build
