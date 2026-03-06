@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { clientsApi } from '../api'
-import { Search, Plus, Phone, Mail, RefreshCw } from 'lucide-react'
+import { Search, Plus, Phone, Mail, RefreshCw, Zap } from 'lucide-react'
+import ClientForm from '../components/ClientForm'
 
 const CONSTITUTION_COLORS = {
   'Individual':       'bg-blue-100 text-blue-800',
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [constitution, setConstitution] = useState('')
   const [isActive,     setIsActive]     = useState('')
   const [isDirect,     setIsDirect]     = useState('')
+  const [quickCreate,  setQuickCreate]  = useState(false)
 
   const fetchClients = async () => {
     setLoading(true)
@@ -57,12 +59,20 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-900">All Clients</h1>
           <p className="text-gray-500 text-sm mt-0.5">{clients.length} records</p>
         </div>
-        <button
-          onClick={() => navigate('/clients/new')}
-          className="flex items-center gap-2 bg-[#1F3864] hover:bg-[#162848] text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
-        >
-          <Plus size={16} /> Add Client
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setQuickCreate(true)}
+            className="flex items-center gap-2 border border-[#1F3864] text-[#1F3864] hover:bg-blue-50 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Zap size={16} /> Quick Create
+          </button>
+          <button
+            onClick={() => navigate('/clients/new')}
+            className="flex items-center gap-2 bg-[#1F3864] hover:bg-[#162848] text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Plus size={16} /> Add Client
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -182,6 +192,13 @@ export default function Dashboard() {
           </table>
         )}
       </div>
+      {quickCreate && (
+        <ClientForm
+          quick
+          onClose={() => setQuickCreate(false)}
+          onSaved={c => { setQuickCreate(false); navigate(`/clients/${c.id}`) }}
+        />
+      )}
     </div>
   )
 }

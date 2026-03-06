@@ -60,7 +60,7 @@ class ClientCreate(BaseModel):
     constitution:                str
     display_name:                str
     legal_name:                  str
-    date_of_incorporation_birth: Optional[date] = None
+    date_of_incorporation_birth: date
     cin_llpin:                   Optional[str]  = None
     tan:                         Optional[str]  = None
     is_direct_client:            bool           = True
