@@ -41,7 +41,14 @@ jobs:
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
           command_timeout: 10m
+          envs: DB_PASSWORD,SECRET_KEY,CREDENTIAL_ENCRYPTION_KEY
           script: |
             cd $HOME/client-dashboard
             git pull origin main
-            docker compose --env-file $HOME/client-dashboard/.env up -d --build
+            cat > .env << EOF
+DB_PASSWORD=$DB_PASSWORD
+SECRET_KEY=$SECRET_KEY
+CREDENTIAL_ENCRYPTION_KEY=$CREDENTIAL_ENCRYPTION_KEY
+ACCESS_TOKEN_EXPIRE_HOURS=8
+EOF
+            docker compose up -d --build
