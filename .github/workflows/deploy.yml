@@ -45,10 +45,8 @@ jobs:
           script: |
             cd $HOME/client-dashboard
             git pull origin main
-            cat > .env << EOF
-DB_PASSWORD=$DB_PASSWORD
-SECRET_KEY=$SECRET_KEY
-CREDENTIAL_ENCRYPTION_KEY=$CREDENTIAL_ENCRYPTION_KEY
-ACCESS_TOKEN_EXPIRE_HOURS=8
-EOF
+            echo "DB_PASSWORD=$DB_PASSWORD" > .env
+            echo "SECRET_KEY=$SECRET_KEY" >> .env
+            echo "CREDENTIAL_ENCRYPTION_KEY=$CREDENTIAL_ENCRYPTION_KEY" >> .env
+            echo "ACCESS_TOKEN_EXPIRE_HOURS=8" >> .env
             docker compose up -d --build
