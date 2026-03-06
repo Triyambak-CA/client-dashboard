@@ -61,22 +61,56 @@ function CopyBtn({ value }) {
   )
 }
 
+function HeaderCredPill({ label, value }) {
+  const [show, setShow] = useState(false)
+  const [copied, setCopied] = useState(false)
+  if (!value) return null
+
+  const copy = async () => {
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(value)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = value; ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.focus(); ta.select()
+        document.execCommand('copy'); document.body.removeChild(ta)
+      }
+      setCopied(true); setTimeout(() => setCopied(false), 2000)
+    } catch {}
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 bg-gray-100 border border-gray-200 rounded px-2 py-0.5 text-xs group">
+      <span className="text-gray-500 mr-0.5">{label}:</span>
+      <span className="font-mono text-gray-800">{show ? value : '••••••'}</span>
+      <button onClick={() => setShow(s => !s)} className="text-gray-400 hover:text-gray-600">
+        {show ? <EyeOff size={10} /> : <Eye size={10} />}
+      </button>
+      <button onClick={copy} className="text-gray-400 hover:text-gray-600">
+        {copied ? <Check size={10} className="text-green-500" /> : <Copy size={10} />}
+      </button>
+    </span>
+  )
+}
+
 function Field({ label, value, secret }) {
   const [show, setShow] = useState(false)
-  if (!value) return null
+  const hasValue = !!value
+  const displayValue = value || '—'
   return (
     <div>
       <p className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-0.5">{label}</p>
       <div className="flex items-center gap-1 group">
-        <p className="text-sm text-gray-900 font-mono break-all">
-          {secret && !show ? '••••••••' : value}
+        <p className={`text-sm font-mono break-all ${hasValue ? 'text-gray-900' : 'text-gray-400'}`}>
+          {secret && hasValue && !show ? '••••••••' : displayValue}
         </p>
-        {secret && (
+        {secret && hasValue && (
           <button onClick={() => setShow(s => !s)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
             {show ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
         )}
-        <CopyBtn value={value} />
+        {hasValue && <CopyBtn value={value} />}
       </div>
     </div>
   )
@@ -217,7 +251,10 @@ export default function ClientDetail() {
               {!client.is_active && <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">Inactive</span>}
               {client.is_on_retainer && <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">Retainer</span>}
             </div>
-            <p className="text-gray-500 text-sm mt-1">{client.legal_name} &nbsp;·&nbsp; PAN: <span className="font-mono">{client.pan}</span></p>
+            <div className="flex items-center flex-wrap gap-2 mt-1">
+              <p className="text-gray-500 text-sm">{client.legal_name} &nbsp;·&nbsp; PAN: <span className="font-mono">{client.pan}</span></p>
+              <HeaderCredPill label="AIS/TIS Pwd" value={client.password_ais_tis} />
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">

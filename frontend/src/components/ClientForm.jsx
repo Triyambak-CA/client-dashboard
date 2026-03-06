@@ -49,11 +49,12 @@ function Field({ label, name, type = 'text', value, onChange, required, options,
   )
 }
 
-export default function ClientForm({ client, onClose, onSaved, inline }) {
+export default function ClientForm({ client, onClose, onSaved, inline, quick: initialQuick }) {
   const isEdit = !!client
   const [form, setForm]     = useState(client || { constitution: 'Individual', is_direct_client: true, is_active: true, is_on_retainer: false, nationality: 'Indian' })
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState('')
+  const [quick, setQuick]   = useState(!isEdit && !!initialQuick)
 
   const handle = e => {
     const { name, value, type, checked } = e.target
@@ -111,7 +112,7 @@ export default function ClientForm({ client, onClose, onSaved, inline }) {
         <Field label="Constitution"           name="constitution"                value={form.constitution}                onChange={handle} required options={CONSTITUTIONS} />
         <Field label="Display Name"           name="display_name"                value={form.display_name}                onChange={handle} required />
         <Field label="Legal Name"             name="legal_name"                  value={form.legal_name}                  onChange={handle} required />
-        <Field label="Date of Incorp / Birth" name="date_of_incorporation_birth" value={form.date_of_incorporation_birth} onChange={handle} type="date" />
+        <Field label="Date of Incorp / Birth" name="date_of_incorporation_birth" value={form.date_of_incorporation_birth} onChange={handle} type="date" required />
         <Field label="CIN / LLPIN"            name="cin_llpin"                   value={form.cin_llpin}                   onChange={handle} />
         <Field label="TAN"                    name="tan"                         value={form.tan}                         onChange={handle} />
         <Field label="Client Since"           name="client_since"                value={form.client_since}                onChange={handle} type="date" />
@@ -122,7 +123,15 @@ export default function ClientForm({ client, onClose, onSaved, inline }) {
         </div>
       </FormSection>
 
-      {isIndividual && (
+      {quick && (
+        <div className="mb-4">
+          <button type="button" onClick={() => setQuick(false)} className="text-xs text-blue-600 hover:underline">
+            + Add more details (contact, credentials, address…)
+          </button>
+        </div>
+      )}
+
+      {!quick && isIndividual && (
         <>
           <FormSection title="Individual KYC — Personal Identity">
             <Field label="Father's Name" name="father_name" value={form.father_name} onChange={handle} />
@@ -148,46 +157,50 @@ export default function ClientForm({ client, onClose, onSaved, inline }) {
         </>
       )}
 
-      <FormSection title="Contact">
-        <Field label="Primary Phone"   name="primary_phone"   value={form.primary_phone}   onChange={handle} />
-        <Field label="Secondary Phone" name="secondary_phone" value={form.secondary_phone} onChange={handle} />
-        <Field label="Primary Email"   name="primary_email"   value={form.primary_email}   onChange={handle} type="email" />
-        <Field label="Secondary Email" name="secondary_email" value={form.secondary_email} onChange={handle} type="email" />
-      </FormSection>
+      {!quick && (
+        <>
+          <FormSection title="Contact">
+            <Field label="Primary Phone"   name="primary_phone"   value={form.primary_phone}   onChange={handle} />
+            <Field label="Secondary Phone" name="secondary_phone" value={form.secondary_phone} onChange={handle} />
+            <Field label="Primary Email"   name="primary_email"   value={form.primary_email}   onChange={handle} type="email" />
+            <Field label="Secondary Email" name="secondary_email" value={form.secondary_email} onChange={handle} type="email" />
+          </FormSection>
 
-      <FormSection title="Address">
-        <Field label="Address Line 1" name="address_line1" value={form.address_line1} onChange={handle} span2 />
-        <Field label="Address Line 2" name="address_line2" value={form.address_line2} onChange={handle} span2 />
-        <Field label="City"           name="city"          value={form.city}          onChange={handle} />
-        <Field label="State"          name="state"         value={form.state}         onChange={handle} options={STATES} />
-        <Field label="Pin Code"       name="pin_code"      value={form.pin_code}      onChange={handle} />
-      </FormSection>
+          <FormSection title="Address">
+            <Field label="Address Line 1" name="address_line1" value={form.address_line1} onChange={handle} span2 />
+            <Field label="Address Line 2" name="address_line2" value={form.address_line2} onChange={handle} span2 />
+            <Field label="City"           name="city"          value={form.city}          onChange={handle} />
+            <Field label="State"          name="state"         value={form.state}         onChange={handle} options={STATES} />
+            <Field label="Pin Code"       name="pin_code"      value={form.pin_code}      onChange={handle} />
+          </FormSection>
 
-      <FormSection title="Income Tax Portal">
-        <Field label="IT Portal User ID"       name="it_portal_user_id"     value={form.it_portal_user_id}     onChange={handle} />
-        <Field label="IT Portal Password"      name="it_portal_password"    value={form.it_portal_password}    onChange={handle} type="password" />
-        <Field label="IT Portal User ID (TDS)" name="it_portal_user_id_tds" value={form.it_portal_user_id_tds} onChange={handle} />
-        <Field label="IT Password (TDS)"       name="it_password_tds"       value={form.it_password_tds}       onChange={handle} type="password" />
-        <Field label="Password for 26AS"       name="password_26as"         value={form.password_26as}         onChange={handle} type="password" />
-        <Field label="Password for AIS / TIS"  name="password_ais_tis"      value={form.password_ais_tis}      onChange={handle} type="password" />
-      </FormSection>
+          <FormSection title="Income Tax Portal">
+            <Field label="IT Portal User ID"       name="it_portal_user_id"     value={form.it_portal_user_id}     onChange={handle} />
+            <Field label="IT Portal Password"      name="it_portal_password"    value={form.it_portal_password}    onChange={handle} type="password" />
+            <Field label="IT Portal User ID (TDS)" name="it_portal_user_id_tds" value={form.it_portal_user_id_tds} onChange={handle} />
+            <Field label="IT Password (TDS)"       name="it_password_tds"       value={form.it_password_tds}       onChange={handle} type="password" />
+            <Field label="Password for 26AS"       name="password_26as"         value={form.password_26as}         onChange={handle} type="password" />
+            <Field label="Password for AIS / TIS"  name="password_ais_tis"      value={form.password_ais_tis}      onChange={handle} type="password" />
+          </FormSection>
 
-      <FormSection title="TRACES">
-        <Field label="TRACES User ID (Deductor)"   name="traces_user_id_deductor"  value={form.traces_user_id_deductor}  onChange={handle} />
-        <Field label="TRACES Password (Deductor)"  name="traces_password_deductor" value={form.traces_password_deductor} onChange={handle} type="password" />
-        <Field label="TRACES User ID (Tax Payer)"  name="traces_user_id_taxpayer"  value={form.traces_user_id_taxpayer}  onChange={handle} />
-        <Field label="TRACES Password (Tax Payer)" name="traces_password_taxpayer" value={form.traces_password_taxpayer} onChange={handle} type="password" />
-      </FormSection>
+          <FormSection title="TRACES">
+            <Field label="TRACES User ID (Deductor)"   name="traces_user_id_deductor"  value={form.traces_user_id_deductor}  onChange={handle} />
+            <Field label="TRACES Password (Deductor)"  name="traces_password_deductor" value={form.traces_password_deductor} onChange={handle} type="password" />
+            <Field label="TRACES User ID (Tax Payer)"  name="traces_user_id_taxpayer"  value={form.traces_user_id_taxpayer}  onChange={handle} />
+            <Field label="TRACES Password (Tax Payer)" name="traces_password_taxpayer" value={form.traces_password_taxpayer} onChange={handle} type="password" />
+          </FormSection>
 
-      <FormSection title="Notes">
-        <div className="md:col-span-2">
-          <textarea
-            name="notes" value={form.notes || ''} onChange={handle} rows={3}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="Internal notes…"
-          />
-        </div>
-      </FormSection>
+          <FormSection title="Notes">
+            <div className="md:col-span-2">
+              <textarea
+                name="notes" value={form.notes || ''} onChange={handle} rows={3}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Internal notes…"
+              />
+            </div>
+          </FormSection>
+        </>
+      )}
 
       {error && <p className="text-red-600 text-sm bg-red-50 px-3 py-2 rounded-lg mb-4">{error}</p>}
 
@@ -196,7 +209,7 @@ export default function ClientForm({ client, onClose, onSaved, inline }) {
           Cancel
         </button>
         <button type="submit" disabled={loading} className="px-5 py-2 text-sm bg-[#1F3864] hover:bg-[#162848] text-white rounded-lg font-medium transition-colors disabled:opacity-60">
-          {loading ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Client'}
+          {loading ? 'Saving…' : isEdit ? 'Save Changes' : quick ? 'Quick Create' : 'Create Client'}
         </button>
       </div>
     </form>
