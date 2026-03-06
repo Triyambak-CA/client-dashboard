@@ -1,9 +1,69 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import * as XLSX from 'xlsx'
+import XLSX from 'xlsx-js-style'
 
-const BRAND = [31, 56, 100]       // #1F3864
-const BRAND_LIGHT = [240, 243, 250]
+// ─── PDF minimal theme palette ─────────────────────────────────────────────
+const C_BLACK  = [30, 30, 30]
+const C_DARK   = [60, 60, 60]
+const C_GRAY   = [102, 102, 102]
+const C_LIGHT  = [153, 153, 153]
+const C_RULE   = [220, 220, 220]
+const C_ACCENT = [180, 180, 180]
+
+// ─── Excel style objects (xlsx-js-style) ───────────────────────────────────
+const XL_TITLE  = { font: { bold: true, sz: 12, color: { rgb: '1F3864' } } }
+const XL_META   = { font: { italic: true, sz: 9,  color: { rgb: '666666' } } }
+const XL_HEADER = {
+  font: { bold: true, color: { rgb: 'FFFFFF' } },
+  fill: { fgColor: { rgb: '1F3864' } },
+  alignment: { horizontal: 'center' },
+}
+const XL_LABEL  = { font: { bold: true, color: { rgb: '505050' } } }
+
+function applyXlStyles(ws, data, headerRowIdx) {
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+
+  // Title row
+  const t0 = XLSX.utils.encode_cell({ r: 0, c: 0 })
+  if (ws[t0]) ws[t0].s = XL_TITLE
+
+  // Metadata rows 1–2
+  for (let mr = 1; mr <= 2; mr++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const a = XLSX.utils.encode_cell({ r: mr, c })
+      if (ws[a]) ws[a].s = XL_META
+    }
+  }
+
+  // Header row
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const a = XLSX.utils.encode_cell({ r: headerRowIdx, c })
+    if (ws[a]) ws[a].s = XL_HEADER
+  }
+
+  // Bold labels on col 0 for 2-column (Field / Value) sheets
+  if (data[headerRowIdx]?.length === 2) {
+    for (let r = headerRowIdx + 1; r <= range.e.r; r++) {
+      const a = XLSX.utils.encode_cell({ r, c: 0 })
+      if (ws[a]) ws[a].s = XL_LABEL
+    }
+  }
+
+  // Auto column widths (capped at 60 chars)
+  const cols = []
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    let max = 10
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const val = ws[XLSX.utils.encode_cell({ r, c })]?.v
+      if (val != null) max = Math.max(max, String(val).length)
+    }
+    cols.push({ wch: Math.min(max + 2, 60) })
+  }
+  ws['!cols'] = cols
+
+  // Freeze rows up to and including the header
+  ws['!freeze'] = { xSplit: 0, ySplit: headerRowIdx + 1 }
+}
 
 function v(val) {
   if (val === null || val === undefined || val === '') return '—'
@@ -15,43 +75,43 @@ function v(val) {
 
 function drawPDFHeader(doc, client) {
   const w = doc.internal.pageSize.width
-  doc.setFillColor(...BRAND)
-  doc.rect(0, 0, w, 26, 'F')
-  // Accent line
-  doc.setFillColor(255, 200, 60)
-  doc.rect(0, 26, w, 2, 'F')
 
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(14)
+  doc.setTextColor(...C_BLACK)
+  doc.setFontSize(13)
   doc.setFont('helvetica', 'bold')
-  doc.text(client.display_name, 14, 11)
+  doc.text(client.display_name, 14, 12)
 
-  doc.setFontSize(8)
+  doc.setFontSize(7.5)
   doc.setFont('helvetica', 'normal')
+  doc.setTextColor(...C_GRAY)
   doc.text(
     `PAN: ${client.pan}   ·   ${client.constitution}   ·   ${client.legal_name || ''}`,
     14, 19
   )
   doc.text(
     `Generated: ${new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}`,
-    w - 14, 19,
-    { align: 'right' }
+    w - 14, 19, { align: 'right' }
   )
-  doc.setTextColor(0, 0, 0)
+
+  // Thin rule
+  doc.setDrawColor(...C_ACCENT)
+  doc.setLineWidth(0.5)
+  doc.line(14, 23, w - 14, 23)
+  doc.setDrawColor(0)
+  doc.setTextColor(0)
 }
 
 function sectionHeading(doc, title, y) {
-  doc.setFontSize(10)
+  doc.setFontSize(7.5)
   doc.setFont('helvetica', 'bold')
-  doc.setTextColor(...BRAND)
+  doc.setTextColor(...C_LIGHT)
   doc.text(title.toUpperCase(), 14, y)
-  doc.setTextColor(0, 0, 0)
-  doc.setFont('helvetica', 'normal')
-  // underline
-  doc.setDrawColor(...BRAND)
-  doc.setLineWidth(0.4)
+  doc.setDrawColor(...C_RULE)
+  doc.setLineWidth(0.3)
   doc.line(14, y + 1.5, doc.internal.pageSize.width - 14, y + 1.5)
   doc.setDrawColor(0)
+  doc.setFont('helvetica', 'normal')
+  doc.setTextColor(0)
   return y + 7
 }
 
@@ -64,10 +124,9 @@ function kvTable(doc, pairs, startY, client) {
     theme: 'plain',
     styles: { fontSize: 8, cellPadding: { top: 2, bottom: 2, left: 4, right: 4 } },
     columnStyles: {
-      0: { fontStyle: 'bold', textColor: [80, 80, 80], cellWidth: 55 },
-      1: { textColor: [30, 30, 30], font: 'courier' },
+      0: { fontStyle: 'bold', textColor: C_DARK, cellWidth: 55 },
+      1: { textColor: C_BLACK, font: 'courier' },
     },
-    alternateRowStyles: { fillColor: BRAND_LIGHT },
     margin: { left: 14, right: 14 },
     didDrawPage: () => { drawPDFHeader(doc, client) },
   })
@@ -86,15 +145,21 @@ function dataTable(doc, head, rows, startY, client) {
     startY,
     head: [head],
     body: rows.map(r => r.map(c => v(c))),
-    theme: 'striped',
+    theme: 'plain',
     headStyles: {
-      fillColor: BRAND,
-      textColor: [255, 255, 255],
-      fontSize: 8,
+      fillColor: [245, 245, 245],
+      textColor: C_DARK,
+      fontSize: 7.5,
       fontStyle: 'bold',
+      lineColor: C_RULE,
+      lineWidth: 0.3,
     },
-    bodyStyles: { fontSize: 7.5 },
-    alternateRowStyles: { fillColor: BRAND_LIGHT },
+    bodyStyles: {
+      fontSize: 7.5,
+      textColor: C_BLACK,
+      lineColor: C_RULE,
+      lineWidth: 0.2,
+    },
     margin: { left: 14, right: 14 },
     didDrawPage: () => { drawPDFHeader(doc, client) },
   })
@@ -105,7 +170,7 @@ function needPage(doc, y, client) {
   if (y > doc.internal.pageSize.height - 40) {
     doc.addPage()
     drawPDFHeader(doc, client)
-    return 36
+    return 30
   }
   return y
 }
@@ -114,7 +179,7 @@ function needPage(doc, y, client) {
 export function exportSectionPDF({ client, title, head, rows }) {
   const doc = new jsPDF({ orientation: rows[0]?.length > 6 ? 'landscape' : 'portrait' })
   drawPDFHeader(doc, client)
-  let y = 36
+  let y = 30
   y = sectionHeading(doc, title, y)
   dataTable(doc, head, rows, y, client)
   doc.save(`${client.display_name} — ${title}.pdf`)
@@ -131,12 +196,7 @@ export function exportSectionExcel({ client, title, head, rows }) {
     ...rows.map(r => r.map(c => v(c))),
   ]
   const ws = XLSX.utils.aoa_to_sheet(info)
-  // Bold the header row (row index 3)
-  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
-  for (let c = range.s.c; c <= range.e.c; c++) {
-    const cellAddr = XLSX.utils.encode_cell({ r: 3, c })
-    if (ws[cellAddr]) ws[cellAddr].s = { font: { bold: true } }
-  }
+  applyXlStyles(ws, info, 3)
   XLSX.utils.book_append_sheet(wb, ws, title.slice(0, 31))
   XLSX.writeFile(wb, `${client.display_name} — ${title}.xlsx`)
 }
@@ -145,7 +205,7 @@ export function exportSectionExcel({ client, title, head, rows }) {
 export async function exportFullClientPDF(client, fetchers) {
   const doc = new jsPDF({ orientation: 'landscape' })
   drawPDFHeader(doc, client)
-  let y = 36
+  let y = 30
 
   // ── Overview ────────────────────────────────────────────────────────────────
   y = sectionHeading(doc, 'Overview', y)
@@ -289,13 +349,15 @@ export async function exportFullClientExcel(client, fetchers) {
   const ts = new Date().toLocaleString('en-IN')
 
   function sheet(title, rows) {
-    const ws = XLSX.utils.aoa_to_sheet([
+    const data = [
       [title],
       [`Client: ${client.display_name}`, `PAN: ${client.pan}`, client.constitution],
       [`Generated: ${ts}`],
       [],
       ...rows,
-    ])
+    ]
+    const ws = XLSX.utils.aoa_to_sheet(data)
+    applyXlStyles(ws, data, 4)
     XLSX.utils.book_append_sheet(wb, ws, title.slice(0, 31))
   }
 
