@@ -15,8 +15,9 @@ jobs:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
-          command_timeout: 60m
+          command_timeout: 30m
           script: |
             cd client-dashboard
             git pull origin main
+            cd frontend && npm ci && npm run build && cd ..
             docker compose up -d --build
