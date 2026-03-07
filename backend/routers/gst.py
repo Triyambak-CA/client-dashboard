@@ -193,22 +193,27 @@ async def lookup_gstin(
         portal_err = "no response"
 
         try:
-            # GET with query params — same method the portal's Angular JS uses
             resp = await curl.get(
                 _CAPTCHA_SEARCH_URL,
                 params={"gstin": gstin, "captcha": captcha.strip()},
                 headers=_GST_HEADERS,
             )
             body = resp.text or ""
-            portal_err = f"GET {resp.status_code}: {body[:400]}"
+            portal_err = f"GET {resp.status_code}: {body[:600]}"
             if resp.status_code == 200 and body.strip():
-                raw = resp.json()
-                if _has_taxpayer_data(raw):
-                    del _captcha_sessions[session_id]
-                    await curl.close()
-                    return _parse_gst_response(raw)
+                try:
+                    raw = resp.json()
+                except Exception:
+                    pass  # body is not JSON — portal_err already holds the raw body
+                else:
+                    if _has_taxpayer_data(raw):
+                        del _captcha_sessions[session_id]
+                        await curl.close()
+                        return _parse_gst_response(raw)
+                    else:
+                        portal_err = f"GET 200 no-data: {body[:600]}"
         except Exception as e:
-            portal_err = f"GET exception: {e}"
+            portal_err = f"GET network-err: {e}"
 
         _log.warning("GST CAPTCHA lookup failed for %s: %s", gstin, portal_err)
         raise HTTPException(
