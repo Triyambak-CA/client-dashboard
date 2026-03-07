@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 import uuid
+import os
 import re
 import logging
 import json as _json
@@ -91,6 +93,16 @@ def _parse_gst_response(raw: dict) -> dict:
 def _has_taxpayer_data(raw: dict) -> bool:
     data = raw.get("data", raw)
     return bool(data.get("lgnm") or data.get("legal_name") or data.get("tradeNam"))
+
+
+_SCRIPT_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gst_tampermonkey.user.js")
+
+@router.get("/tampermonkey.user.js", include_in_schema=False)
+def serve_tampermonkey_script():
+    """Serve the Tampermonkey user script for GST portal data extraction."""
+    with open(_SCRIPT_PATH, "r", encoding="utf-8") as f:
+        content = f.read()
+    return Response(content=content, media_type="application/javascript")
 
 
 @router.get("/lookup/{gstin}")

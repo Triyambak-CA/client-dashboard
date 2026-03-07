@@ -58,6 +58,7 @@ export default function GSTTab({ clientId, client }) {
   const [fetchError,        setFetchError]        = useState('')
   const [legalNameWarning,  setLegalNameWarning]  = useState('')
   const [showPortalLink,    setShowPortalLink]    = useState(false)
+  const [waitingForPortal,  setWaitingForPortal]  = useState(false)
 
   const fetchRecords = async () => {
     try { const r = await gstApi.list(clientId); setRecords(r.data) }
@@ -71,8 +72,20 @@ export default function GSTTab({ clientId, client }) {
 
   useEffect(() => { fetchRecords(); fetchClients() }, [clientId])
 
+  // Listen for data sent back from the GST portal tab via Tampermonkey
+  useEffect(() => {
+    const handler = e => {
+      if (e.data?.type !== 'GST_DATA') return
+      _applyGstData(e.data.data)
+      setWaitingForPortal(false)
+      setShowPortalLink(false)
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [])
+
   const _resetFetchState = () => {
-    setFetchError(''); setLegalNameWarning(''); setShowPortalLink(false)
+    setFetchError(''); setLegalNameWarning(''); setShowPortalLink(false); setWaitingForPortal(false)
   }
 
   const openAdd  = () => {
@@ -316,19 +329,52 @@ export default function GSTTab({ clientId, client }) {
               {fetchError && (
                 <p className="text-red-600 text-xs mt-1 bg-red-50 px-2 py-1 rounded">{fetchError}</p>
               )}
-              {showPortalLink && (
-                <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
-                  <span className="text-amber-700 text-xs leading-relaxed">
-                    Auto-fetch unavailable. Open the GST portal, search this GSTIN, solve the CAPTCHA, then fill the fields below.
+              {showPortalLink && !waitingForPortal && (
+                <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                  <p className="text-amber-800 text-xs font-medium">Auto-fetch unavailable — CAPTCHA required.</p>
+                  <p className="text-amber-700 text-xs">
+                    Install the Tampermonkey script once, then click "Open GST Portal" — it will auto-fill the GSTIN, and after you solve the CAPTCHA the data will populate here automatically.
+                  </p>
+                  <div className="flex gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const gstin = (form.gstin || '').trim().toUpperCase()
+                        window.open(
+                          `https://services.gst.gov.in/services/searchtp?gstin=${gstin}`,
+                          '_blank'
+                        )
+                        setWaitingForPortal(true)
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700 whitespace-nowrap"
+                    >
+                      Open GST Portal
+                    </button>
+                    <a
+                      href="/api/gst/tampermonkey.user.js"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium border border-amber-400 text-amber-700 rounded hover:bg-amber-100 whitespace-nowrap"
+                      title="Click to install the Tampermonkey script"
+                    >
+                      Install Script
+                    </a>
+                  </div>
+                </div>
+              )}
+              {waitingForPortal && (
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
+                  <Loader2 size={14} className="animate-spin text-blue-600 shrink-0" />
+                  <span className="text-blue-700 text-xs flex-1">
+                    Waiting for data from GST portal… Solve the CAPTCHA in the other tab and the fields will auto-populate.
                   </span>
-                  <a
-                    href="https://services.gst.gov.in/services/searchtp"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="shrink-0 flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700 whitespace-nowrap"
+                  <button
+                    type="button"
+                    onClick={() => { setWaitingForPortal(false); setShowPortalLink(true) }}
+                    className="text-xs text-blue-500 hover:text-blue-700 whitespace-nowrap"
                   >
-                    Open GST Portal
-                  </a>
+                    Cancel
+                  </button>
                 </div>
               )}
               {legalNameWarning && (
