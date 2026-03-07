@@ -9,5 +9,4 @@ python-dotenv==1.0.1
 cryptography==43.0.3
 python-multipart==0.0.12
 httpx==0.28.1
-playwright==1.49.0
 pydantic[email]==2.9.2

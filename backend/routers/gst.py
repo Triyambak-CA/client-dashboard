@@ -1,15 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 import uuid
+import os
 import re
-import time
-import base64
 import logging
 import json as _json
 import httpx
-from playwright.async_api import async_playwright
 from datetime import datetime as dt
-from typing import Optional
 
 _log = logging.getLogger(__name__)
 
@@ -37,36 +34,15 @@ _GST_HEADERS = {
     "Origin": "https://services.gst.gov.in",
 }
 
-# Option B — unofficial endpoints (no CAPTCHA); these are often blocked, kept as fast-fail
+# Option A — Cashfree VRS API (reliable; set CASHFREE_CLIENT_ID + CASHFREE_CLIENT_SECRET env vars)
+_CASHFREE_CLIENT_ID     = os.environ.get("CASHFREE_CLIENT_ID", "")
+_CASHFREE_CLIENT_SECRET = os.environ.get("CASHFREE_CLIENT_SECRET", "")
+_CASHFREE_URL           = "https://api.cashfree.com/verification/gstin"
+
+# Option B — unofficial/public endpoints (no CAPTCHA, no auth; fast-fail fallback)
 _OPTION_B_URLS = [
     "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
 ]
-
-# Option C — official GST portal CAPTCHA-based search via Playwright headless Chrome.
-# The GST portal's search endpoint is protected by Akamai Bot Manager which uses JavaScript-based
-# fingerprinting (_abck cookie from sensor.js). curl_cffi TLS impersonation alone is not enough.
-# Playwright runs a real Chromium browser — Akamai's JS executes normally, the fetch() call for
-# the GSTIN search happens from inside the browser context where all Akamai cookies are present.
-_CAPTCHA_SEARCH_PATH = "/services/api/public/commonapi/searchbygstin"
-
-# In-memory captcha session store  {session_id: {pw, browser, page, expires_at}}
-# Each session holds a live Playwright browser; cleaned up after use or on expiry.
-_captcha_sessions: dict = {}
-_SESSION_TTL = 300  # seconds
-
-
-async def _close_browser_session(entry: dict) -> None:
-    """Best-effort close of a Playwright browser session."""
-    try:
-        if entry.get("browser"):
-            await entry["browser"].close()
-    except Exception:
-        pass
-    try:
-        if entry.get("pw"):
-            await entry["pw"].stop()
-    except Exception:
-        pass
 
 
 def _addr_str(a: dict) -> str:
@@ -123,162 +99,101 @@ def _has_taxpayer_data(raw: dict) -> bool:
     return bool(data.get("lgnm") or data.get("legal_name") or data.get("tradeNam"))
 
 
-@router.get("/captcha")
-async def get_gst_captcha(_: User = Depends(get_current_user)):
-    """
-    Fetch a CAPTCHA image from the GST portal.
-    Returns {session_id, image} where image is a data-URI (base64).
-    Pass session_id + solved captcha text to /gst/lookup/{gstin} to search.
-    """
-    now = time.time()
-    # Prune expired sessions and close their browsers
-    expired = [k for k, v in _captcha_sessions.items() if v["expires_at"] < now]
-    for k in expired:
-        await _close_browser_session(_captcha_sessions[k])
-        del _captcha_sessions[k]
+def _parse_cashfree_response(raw: dict, gstin: str) -> dict:
+    """Parse Cashfree VRS GSTIN verify response into our standard format."""
+    def _parse_date(s: str | None) -> str | None:
+        if not s or str(s).strip() in ("NA", "null", "None", "N/A", "-", ""):
+            return None
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return dt.strptime(str(s).strip(), fmt).strftime("%Y-%m-%d")
+            except (ValueError, TypeError):
+                pass
+        return str(s)
 
-    # Launch a real headless Chrome browser via Playwright.
-    # This is required because the GST portal's search API is protected by Akamai Bot Manager,
-    # which uses JavaScript-based fingerprinting (_abck / bm_sz cookies set by sensor.js).
-    # A real browser executes that JS automatically; all Akamai session cookies are set before
-    # we fetch the CAPTCHA or call the search API.
-    pw = await async_playwright().start()
-    browser = None
-    try:
-        browser = await pw.chromium.launch(
-            headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
-        )
-        page = await browser.new_page()
+    # Cashfree uses slightly different field names across API versions — handle both
+    legal_name = raw.get("legal_name") or raw.get("legal_name_of_business")
+    trade_name = raw.get("trade_name") or raw.get("trade_name_of_business")
+    status     = raw.get("gstin_status") or raw.get("gst_in_status")
+    reg_date   = _parse_date(raw.get("registration_date") or raw.get("date_of_registration"))
+    reg_type   = raw.get("taxpayer_type") or raw.get("constitution_type") or raw.get("constitution_of_business")
+    state_jur  = raw.get("state_jurisdiction") or ""
 
-        # Navigate to the search page — Akamai's sensor.js runs here and sets its cookies
-        await page.goto(
-            "https://services.gst.gov.in/services/searchtp",
-            timeout=30000,
-            wait_until="domcontentloaded",
-        )
-        # Allow ~2 s for Akamai JS to finish setting its session cookies
-        await page.wait_for_timeout(2000)
+    nob = raw.get("nature_of_business_activities") or raw.get("nature_of_business")
+    if isinstance(nob, list):
+        nob = ", ".join(str(n) for n in nob if n)
+    elif nob:
+        nob = str(nob)
+    else:
+        nob = None
 
-        # Fetch the CAPTCHA image from *inside* the browser context (same-origin XHR).
-        # All Akamai cookies are automatically included — no manual cookie management needed.
-        result = await page.evaluate("""
-            async () => {
-                try {
-                    const resp = await fetch('/services/captcha', {
-                        headers: {
-                            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-                            'Referer': location.href,
-                        }
-                    });
-                    if (!resp.ok) return {ok: false, status: resp.status};
-                    const buf  = await resp.arrayBuffer();
-                    const bytes = new Uint8Array(buf);
-                    let bin = '';
-                    for (let b of bytes) bin += String.fromCharCode(b);
-                    const b64 = btoa(bin);
-                    const ct  = (resp.headers.get('content-type') || 'image/png').split(';')[0];
-                    return {ok: true, image: `data:${ct};base64,${b64}`};
-                } catch (e) {
-                    return {ok: false, error: String(e)};
-                }
-            }
-        """)
+    addr = raw.get("principal_place_address") or raw.get("principal_address")
+    principal_address = None
+    if isinstance(addr, dict):
+        parts = [
+            addr.get("building_name"), addr.get("building_number"),
+            addr.get("floor_number"), addr.get("street"),
+            addr.get("location"), addr.get("district_name"), addr.get("state_name"),
+        ]
+        pin = addr.get("pincode", "")
+        joined = ", ".join(p for p in parts if p)
+        principal_address = f"{joined} - {pin}" if pin else (joined or None)
+    elif isinstance(addr, str) and addr.strip():
+        principal_address = addr.strip()
 
-        if not result or not result.get("ok"):
-            err = (result or {}).get("error") or (result or {}).get("status") or "no response"
-            raise HTTPException(status_code=502, detail=f"Could not fetch CAPTCHA from GST portal: {err}")
-
-        session_id = str(uuid.uuid4())
-        _captcha_sessions[session_id] = {
-            "pw": pw, "browser": browser, "page": page,
-            "expires_at": now + _SESSION_TTL,
-        }
-        return {"session_id": session_id, "image": result["image"]}
-
-    except HTTPException:
-        await _close_browser_session({"pw": pw, "browser": browser})
-        raise
-    except Exception as exc:
-        await _close_browser_session({"pw": pw, "browser": browser})
-        raise HTTPException(status_code=502, detail=f"Browser error while fetching CAPTCHA: {exc}")
+    return {
+        "legal_name":           legal_name,
+        "trade_name":           trade_name,
+        "gstin_status":         status,
+        "state":                state_jur,
+        "state_code":           gstin[:2] if gstin else None,
+        "registration_type":    reg_type,
+        "registration_date":    reg_date,
+        "cancellation_date":    None,   # not provided by Cashfree
+        "principal_address":    principal_address,
+        "nature_of_business":   nob,
+        "einvoice_applicable":  None,   # not provided by Cashfree
+        "last_fetched_at":      dt.utcnow().isoformat(),
+    }
 
 
 @router.get("/lookup/{gstin}")
 async def lookup_gstin(
-    gstin:      str,
-    session_id: Optional[str] = Query(None, description="Session ID from /gst/captcha"),
-    captcha:    Optional[str] = Query(None, description="User-solved CAPTCHA text"),
-    _:          User = Depends(get_current_user),
+    gstin: str,
+    _:     User = Depends(get_current_user),
 ):
     """
     Fetch taxpayer data by GSTIN.
-    - Without session_id/captcha: tries unofficial endpoints (no CAPTCHA) then third-party API.
-    - With session_id + captcha: uses the user-solved CAPTCHA to query the official GST portal.
+    Tries Option A (Cashfree VRS, if credentials configured) then Option B (unofficial endpoints).
     """
     gstin = gstin.upper().strip()
     if not _GSTIN_RE.match(gstin):
         raise HTTPException(status_code=400, detail="Invalid GSTIN format")
 
-    # ── Option C: CAPTCHA-authenticated search ───────────────────────────────
-    if session_id and captcha:
-        session = _captcha_sessions.get(session_id)
-        if not session:
-            raise HTTPException(status_code=400, detail="CAPTCHA session expired or invalid. Please refresh the CAPTCHA and try again.")
-        if session["expires_at"] < time.time():
-            del _captcha_sessions[session_id]
-            raise HTTPException(status_code=400, detail="CAPTCHA session expired. Please refresh the CAPTCHA and try again.")
-
-        page = session["page"]   # reuse the live Playwright page (Akamai cookies already set)
-        portal_err = "no response"
-
+    # ── Option A: Cashfree VRS API ────────────────────────────────────────────
+    if _CASHFREE_CLIENT_ID and _CASHFREE_CLIENT_SECRET:
         try:
-            # Execute the search fetch from inside the browser — Akamai sees a legitimate
-            # same-origin XHR from the same browser session that loaded the search page.
-            data = await page.evaluate("""
-                async ([gstin, captcha, searchPath]) => {
-                    try {
-                        const params = new URLSearchParams({gstin, captcha});
-                        const resp = await fetch(searchPath + '?' + params.toString(), {
-                            headers: {
-                                'Accept': 'application/json, text/plain, */*',
-                                'Referer': location.href,
-                            }
-                        });
-                        const text = await resp.text();
-                        return {status: resp.status, body: text};
-                    } catch (e) {
-                        return {status: 0, body: String(e)};
-                    }
-                }
-            """, [gstin, captcha.strip(), _CAPTCHA_SEARCH_PATH])
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    _CASHFREE_URL,
+                    headers={
+                        "x-client-id":     _CASHFREE_CLIENT_ID,
+                        "x-client-secret": _CASHFREE_CLIENT_SECRET,
+                        "x-api-version":   "2023-08-01",
+                        "Content-Type":    "application/json",
+                    },
+                    json={"gstin": gstin},
+                )
+            if resp.status_code == 200:
+                raw = resp.json()
+                if raw.get("is_valid") and (raw.get("legal_name") or raw.get("legal_name_of_business") or raw.get("trade_name")):
+                    return _parse_cashfree_response(raw, gstin)
+            else:
+                _log.warning("Cashfree GST lookup returned %s for %s: %s", resp.status_code, gstin, resp.text[:300])
+        except Exception as exc:
+            _log.warning("Cashfree GST lookup failed for %s: %s", gstin, exc)
 
-            status = data["status"]
-            body   = data["body"] or ""
-            portal_err = f"GET {status}: {body[:600]}"
-
-            if status == 200 and body.strip():
-                try:
-                    raw = _json.loads(body)
-                except Exception:
-                    pass  # non-JSON body; portal_err already holds the raw text
-                else:
-                    if _has_taxpayer_data(raw):
-                        await _close_browser_session(session)
-                        del _captcha_sessions[session_id]
-                        return _parse_gst_response(raw)
-                    else:
-                        portal_err = f"GET 200 no-data: {body[:600]}"
-        except Exception as e:
-            portal_err = f"evaluate error: {e}"
-
-        _log.warning("GST CAPTCHA lookup failed for %s: %s", gstin, portal_err)
-        raise HTTPException(
-            status_code=422,
-            detail=f"CAPTCHA answer was incorrect or the GST portal rejected the request. Please try again with a fresh CAPTCHA. (debug: {portal_err})",
-        )
-
-    # ── Option B: unofficial endpoints (no CAPTCHA) — fast-fail ─────────────
+    # ── Option B: unofficial/public endpoints (no CAPTCHA) — fast-fail ───────
     async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
         for url_tpl in _OPTION_B_URLS:
             try:
@@ -290,10 +205,9 @@ async def lookup_gstin(
             except Exception:
                 continue
 
-    # Option B failed — signal the frontend to offer CAPTCHA
     raise HTTPException(
         status_code=503,
-        detail="CAPTCHA_REQUIRED",
+        detail="Could not fetch GST data automatically. Please fill in the details manually.",
     )
 
 
