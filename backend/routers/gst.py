@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 import uuid
-import os
 import re
 import logging
 import json as _json
@@ -34,12 +33,7 @@ _GST_HEADERS = {
     "Origin": "https://services.gst.gov.in",
 }
 
-# Option A — Cashfree VRS API (reliable; set CASHFREE_CLIENT_ID + CASHFREE_CLIENT_SECRET env vars)
-_CASHFREE_CLIENT_ID     = os.environ.get("CASHFREE_CLIENT_ID", "")
-_CASHFREE_CLIENT_SECRET = os.environ.get("CASHFREE_CLIENT_SECRET", "")
-_CASHFREE_URL           = "https://api.cashfree.com/verification/gstin"
-
-# Option B — unofficial/public endpoints (no CAPTCHA, no auth; fast-fail fallback)
+# Unofficial/public endpoints — tried first; no auth, no CAPTCHA
 _OPTION_B_URLS = [
     "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
 ]
@@ -99,101 +93,16 @@ def _has_taxpayer_data(raw: dict) -> bool:
     return bool(data.get("lgnm") or data.get("legal_name") or data.get("tradeNam"))
 
 
-def _parse_cashfree_response(raw: dict, gstin: str) -> dict:
-    """Parse Cashfree VRS GSTIN verify response into our standard format."""
-    def _parse_date(s: str | None) -> str | None:
-        if not s or str(s).strip() in ("NA", "null", "None", "N/A", "-", ""):
-            return None
-        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-            try:
-                return dt.strptime(str(s).strip(), fmt).strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                pass
-        return str(s)
-
-    # Cashfree uses slightly different field names across API versions — handle both
-    legal_name = raw.get("legal_name") or raw.get("legal_name_of_business")
-    trade_name = raw.get("trade_name") or raw.get("trade_name_of_business")
-    status     = raw.get("gstin_status") or raw.get("gst_in_status")
-    reg_date   = _parse_date(raw.get("registration_date") or raw.get("date_of_registration"))
-    reg_type   = raw.get("taxpayer_type") or raw.get("constitution_type") or raw.get("constitution_of_business")
-    state_jur  = raw.get("state_jurisdiction") or ""
-
-    nob = raw.get("nature_of_business_activities") or raw.get("nature_of_business")
-    if isinstance(nob, list):
-        nob = ", ".join(str(n) for n in nob if n)
-    elif nob:
-        nob = str(nob)
-    else:
-        nob = None
-
-    addr = raw.get("principal_place_address") or raw.get("principal_address")
-    principal_address = None
-    if isinstance(addr, dict):
-        parts = [
-            addr.get("building_name"), addr.get("building_number"),
-            addr.get("floor_number"), addr.get("street"),
-            addr.get("location"), addr.get("district_name"), addr.get("state_name"),
-        ]
-        pin = addr.get("pincode", "")
-        joined = ", ".join(p for p in parts if p)
-        principal_address = f"{joined} - {pin}" if pin else (joined or None)
-    elif isinstance(addr, str) and addr.strip():
-        principal_address = addr.strip()
-
-    return {
-        "legal_name":           legal_name,
-        "trade_name":           trade_name,
-        "gstin_status":         status,
-        "state":                state_jur,
-        "state_code":           gstin[:2] if gstin else None,
-        "registration_type":    reg_type,
-        "registration_date":    reg_date,
-        "cancellation_date":    None,   # not provided by Cashfree
-        "principal_address":    principal_address,
-        "nature_of_business":   nob,
-        "einvoice_applicable":  None,   # not provided by Cashfree
-        "last_fetched_at":      dt.utcnow().isoformat(),
-    }
-
-
 @router.get("/lookup/{gstin}")
 async def lookup_gstin(
     gstin: str,
     _:     User = Depends(get_current_user),
 ):
-    """
-    Fetch taxpayer data by GSTIN.
-    Tries Option A (Cashfree VRS, if credentials configured) then Option B (unofficial endpoints).
-    """
+    """Try unofficial public endpoints to fetch taxpayer data without CAPTCHA."""
     gstin = gstin.upper().strip()
     if not _GSTIN_RE.match(gstin):
         raise HTTPException(status_code=400, detail="Invalid GSTIN format")
 
-    # ── Option A: Cashfree VRS API ────────────────────────────────────────────
-    if _CASHFREE_CLIENT_ID and _CASHFREE_CLIENT_SECRET:
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    _CASHFREE_URL,
-                    headers={
-                        "x-client-id":     _CASHFREE_CLIENT_ID,
-                        "x-client-secret": _CASHFREE_CLIENT_SECRET,
-                        "x-api-version":   "2023-08-01",
-                        "Content-Type":    "application/json",
-                    },
-                    json={"gstin": gstin},
-                )
-            if resp.status_code == 200:
-                raw = resp.json()
-                if raw.get("is_valid") and (raw.get("legal_name") or raw.get("legal_name_of_business") or raw.get("trade_name")):
-                    return _parse_cashfree_response(raw, gstin)
-            else:
-                _log.warning("Cashfree GST lookup returned %s for %s: %s", resp.status_code, gstin, resp.text[:300])
-        except Exception as exc:
-            _log.warning("Cashfree GST lookup failed for %s: %s", gstin, exc)
-
-    # ── Option B: unofficial/public endpoints (no CAPTCHA) — fast-fail ───────
     async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
         for url_tpl in _OPTION_B_URLS:
             try:
@@ -205,10 +114,7 @@ async def lookup_gstin(
             except Exception:
                 continue
 
-    raise HTTPException(
-        status_code=503,
-        detail="Could not fetch GST data automatically. Please fill in the details manually.",
-    )
+    raise HTTPException(status_code=503, detail="GST_PORTAL_REQUIRED")
 
 
 def _encrypt(data: dict) -> dict:

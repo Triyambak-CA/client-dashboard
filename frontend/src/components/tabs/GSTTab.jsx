@@ -57,6 +57,7 @@ export default function GSTTab({ clientId, client }) {
   const [fetching,          setFetching]          = useState(false)
   const [fetchError,        setFetchError]        = useState('')
   const [legalNameWarning,  setLegalNameWarning]  = useState('')
+  const [showPortalLink,    setShowPortalLink]    = useState(false)
 
   const fetchRecords = async () => {
     try { const r = await gstApi.list(clientId); setRecords(r.data) }
@@ -71,7 +72,7 @@ export default function GSTTab({ clientId, client }) {
   useEffect(() => { fetchRecords(); fetchClients() }, [clientId])
 
   const _resetFetchState = () => {
-    setFetchError(''); setLegalNameWarning('')
+    setFetchError(''); setLegalNameWarning(''); setShowPortalLink(false)
   }
 
   const openAdd  = () => {
@@ -110,13 +111,17 @@ export default function GSTTab({ clientId, client }) {
   const fetchFromGstin = async () => {
     const gstin = (form.gstin || '').trim().toUpperCase()
     if (gstin.length !== 15) return
-    setFetching(true); setFetchError(''); setLegalNameWarning('')
+    setFetching(true); setFetchError(''); setLegalNameWarning(''); setShowPortalLink(false)
     try {
       const r = await gstApi.lookup(gstin)
       _applyGstData(r.data)
     } catch (err) {
       const detail = err.response?.data?.detail || ''
-      setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')
+      if (detail === 'GST_PORTAL_REQUIRED' || err.response?.status === 503) {
+        setShowPortalLink(true)
+      } else {
+        setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')
+      }
     } finally {
       setFetching(false)
     }
@@ -310,6 +315,21 @@ export default function GSTTab({ clientId, client }) {
               </div>
               {fetchError && (
                 <p className="text-red-600 text-xs mt-1 bg-red-50 px-2 py-1 rounded">{fetchError}</p>
+              )}
+              {showPortalLink && (
+                <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+                  <span className="text-amber-700 text-xs leading-relaxed">
+                    Auto-fetch unavailable. Open the GST portal, search this GSTIN, solve the CAPTCHA, then fill the fields below.
+                  </span>
+                  <a
+                    href="https://services.gst.gov.in/services/searchtp"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700 whitespace-nowrap"
+                  >
+                    Open GST Portal
+                  </a>
+                </div>
               )}
               {legalNameWarning && (
                 <p className="text-amber-700 text-xs mt-1 bg-amber-50 px-2 py-1.5 rounded border border-amber-200">
