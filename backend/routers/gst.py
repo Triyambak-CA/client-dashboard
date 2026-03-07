@@ -5,8 +5,9 @@ import re
 import time
 import base64
 import logging
+import json as _json
 import httpx
-from curl_cffi.requests import AsyncSession as CurlSession
+from playwright.async_api import async_playwright
 from datetime import datetime as dt
 from typing import Optional
 
@@ -41,14 +42,31 @@ _OPTION_B_URLS = [
     "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
 ]
 
-# Option C — official GST portal CAPTCHA-based search
-_CAPTCHA_IMG_URL   = "https://services.gst.gov.in/services/captcha"
-_CAPTCHA_SEARCH_URL = "https://services.gst.gov.in/services/api/public/commonapi/searchbygstin"
+# Option C — official GST portal CAPTCHA-based search via Playwright headless Chrome.
+# The GST portal's search endpoint is protected by Akamai Bot Manager which uses JavaScript-based
+# fingerprinting (_abck cookie from sensor.js). curl_cffi TLS impersonation alone is not enough.
+# Playwright runs a real Chromium browser — Akamai's JS executes normally, the fetch() call for
+# the GSTIN search happens from inside the browser context where all Akamai cookies are present.
+_CAPTCHA_SEARCH_PATH = "/services/api/public/commonapi/searchbygstin"
 
-# In-memory captcha session store  {session_id: {cookies, expires_at}}
-# Entries are short-lived (5 min) and pruned on each captcha request
+# In-memory captcha session store  {session_id: {pw, browser, page, expires_at}}
+# Each session holds a live Playwright browser; cleaned up after use or on expiry.
 _captcha_sessions: dict = {}
 _SESSION_TTL = 300  # seconds
+
+
+async def _close_browser_session(entry: dict) -> None:
+    """Best-effort close of a Playwright browser session."""
+    try:
+        if entry.get("browser"):
+            await entry["browser"].close()
+    except Exception:
+        pass
+    try:
+        if entry.get("pw"):
+            await entry["pw"].stop()
+    except Exception:
+        pass
 
 
 def _addr_str(a: dict) -> str:
@@ -113,55 +131,77 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
     Pass session_id + solved captcha text to /gst/lookup/{gstin} to search.
     """
     now = time.time()
-    # Prune expired sessions
+    # Prune expired sessions and close their browsers
     expired = [k for k, v in _captcha_sessions.items() if v["expires_at"] < now]
     for k in expired:
+        await _close_browser_session(_captcha_sessions[k])
         del _captcha_sessions[k]
 
-    # Use curl_cffi to impersonate Chrome's TLS fingerprint — the GST portal uses Akamai WAF.
-    # IMPORTANT: do NOT close the session here. The same session object must be reused for the
-    # subsequent CAPTCHA submission so the Akamai server-side state (TLS session, cookies) is
-    # preserved. Creating a new session for the lookup loses that state and gets blocked.
-    session = CurlSession(impersonate="chrome120")
-
-    # Establish a portal session first so Akamai sets its session cookies
+    # Launch a real headless Chrome browser via Playwright.
+    # This is required because the GST portal's search API is protected by Akamai Bot Manager,
+    # which uses JavaScript-based fingerprinting (_abck / bm_sz cookies set by sensor.js).
+    # A real browser executes that JS automatically; all Akamai session cookies are set before
+    # we fetch the CAPTCHA or call the search API.
+    pw = await async_playwright().start()
+    browser = None
     try:
-        await session.get(
+        browser = await pw.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+        )
+        page = await browser.new_page()
+
+        # Navigate to the search page — Akamai's sensor.js runs here and sets its cookies
+        await page.goto(
             "https://services.gst.gov.in/services/searchtp",
-            headers={"User-Agent": _GST_UA, "Accept": "text/html,*/*"},
+            timeout=30000,
+            wait_until="domcontentloaded",
         )
-    except Exception:
-        pass  # best-effort; proceed even if unreachable
+        # Allow ~2 s for Akamai JS to finish setting its session cookies
+        await page.wait_for_timeout(2000)
 
-    try:
-        resp = await session.get(
-            _CAPTCHA_IMG_URL,
-            headers={
-                "User-Agent": _GST_UA,
-                "Referer": "https://services.gst.gov.in/services/searchtp",
-                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-            },
-        )
+        # Fetch the CAPTCHA image from *inside* the browser context (same-origin XHR).
+        # All Akamai cookies are automatically included — no manual cookie management needed.
+        result = await page.evaluate("""
+            async () => {
+                try {
+                    const resp = await fetch('/services/captcha', {
+                        headers: {
+                            'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+                            'Referer': location.href,
+                        }
+                    });
+                    if (!resp.ok) return {ok: false, status: resp.status};
+                    const buf  = await resp.arrayBuffer();
+                    const bytes = new Uint8Array(buf);
+                    let bin = '';
+                    for (let b of bytes) bin += String.fromCharCode(b);
+                    const b64 = btoa(bin);
+                    const ct  = (resp.headers.get('content-type') || 'image/png').split(';')[0];
+                    return {ok: true, image: `data:${ct};base64,${b64}`};
+                } catch (e) {
+                    return {ok: false, error: String(e)};
+                }
+            }
+        """)
+
+        if not result or not result.get("ok"):
+            err = (result or {}).get("error") or (result or {}).get("status") or "no response"
+            raise HTTPException(status_code=502, detail=f"Could not fetch CAPTCHA from GST portal: {err}")
+
+        session_id = str(uuid.uuid4())
+        _captcha_sessions[session_id] = {
+            "pw": pw, "browser": browser, "page": page,
+            "expires_at": now + _SESSION_TTL,
+        }
+        return {"session_id": session_id, "image": result["image"]}
+
+    except HTTPException:
+        await _close_browser_session({"pw": pw, "browser": browser})
+        raise
     except Exception as exc:
-        await session.close()
-        raise HTTPException(status_code=502, detail=f"Could not reach GST portal: {exc}")
-
-    if resp.status_code != 200:
-        await session.close()
-        raise HTTPException(status_code=502, detail="GST portal returned an error while fetching CAPTCHA.")
-
-    session_id = str(uuid.uuid4())
-    _captcha_sessions[session_id] = {
-        "session": session,   # live CurlSession — kept open for lookup_gstin to reuse
-        "expires_at": now + _SESSION_TTL,
-    }
-
-    content_type = resp.headers.get("content-type", "image/png").split(";")[0]
-    image_b64 = base64.b64encode(resp.content).decode()
-    return {
-        "session_id": session_id,
-        "image": f"data:{content_type};base64,{image_b64}",
-    }
+        await _close_browser_session({"pw": pw, "browser": browser})
+        raise HTTPException(status_code=502, detail=f"Browser error while fetching CAPTCHA: {exc}")
 
 
 @router.get("/lookup/{gstin}")
@@ -189,31 +229,48 @@ async def lookup_gstin(
             del _captcha_sessions[session_id]
             raise HTTPException(status_code=400, detail="CAPTCHA session expired. Please refresh the CAPTCHA and try again.")
 
-        curl = session["session"]   # reuse the live session from captcha fetch
+        page = session["page"]   # reuse the live Playwright page (Akamai cookies already set)
         portal_err = "no response"
 
         try:
-            resp = await curl.get(
-                _CAPTCHA_SEARCH_URL,
-                params={"gstin": gstin, "captcha": captcha.strip()},
-                headers=_GST_HEADERS,
-            )
-            body = resp.text or ""
-            portal_err = f"GET {resp.status_code}: {body[:600]}"
-            if resp.status_code == 200 and body.strip():
+            # Execute the search fetch from inside the browser — Akamai sees a legitimate
+            # same-origin XHR from the same browser session that loaded the search page.
+            data = await page.evaluate("""
+                async ([gstin, captcha, searchPath]) => {
+                    try {
+                        const params = new URLSearchParams({gstin, captcha});
+                        const resp = await fetch(searchPath + '?' + params.toString(), {
+                            headers: {
+                                'Accept': 'application/json, text/plain, */*',
+                                'Referer': location.href,
+                            }
+                        });
+                        const text = await resp.text();
+                        return {status: resp.status, body: text};
+                    } catch (e) {
+                        return {status: 0, body: String(e)};
+                    }
+                }
+            """, [gstin, captcha.strip(), _CAPTCHA_SEARCH_PATH])
+
+            status = data["status"]
+            body   = data["body"] or ""
+            portal_err = f"GET {status}: {body[:600]}"
+
+            if status == 200 and body.strip():
                 try:
-                    raw = resp.json()
+                    raw = _json.loads(body)
                 except Exception:
-                    pass  # body is not JSON — portal_err already holds the raw body
+                    pass  # non-JSON body; portal_err already holds the raw text
                 else:
                     if _has_taxpayer_data(raw):
+                        await _close_browser_session(session)
                         del _captcha_sessions[session_id]
-                        await curl.close()
                         return _parse_gst_response(raw)
                     else:
                         portal_err = f"GET 200 no-data: {body[:600]}"
         except Exception as e:
-            portal_err = f"GET network-err: {e}"
+            portal_err = f"evaluate error: {e}"
 
         _log.warning("GST CAPTCHA lookup failed for %s: %s", gstin, portal_err)
         raise HTTPException(
