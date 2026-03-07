@@ -54,11 +54,14 @@ export default function GSTTab({ clientId, client }) {
   const [error,   setError]     = useState('')
 
   // GSTIN fetch state
-  const [fetching,          setFetching]          = useState(false)
-  const [fetchError,        setFetchError]        = useState('')
-  const [legalNameWarning,  setLegalNameWarning]  = useState('')
-  const [showPortalLink,    setShowPortalLink]    = useState(false)
-  const [waitingForPortal,  setWaitingForPortal]  = useState(false)
+  const [fetching,         setFetching]         = useState(false)
+  const [fetchError,       setFetchError]       = useState('')
+  const [legalNameWarning, setLegalNameWarning] = useState('')
+  // Inline CAPTCHA state
+  const [captcha,          setCaptcha]          = useState(null)   // { img, sessionId }
+  const [captchaText,      setCaptchaText]      = useState('')
+  const [captchaVerifying, setCaptchaVerifying] = useState(false)
+  const [captchaError,     setCaptchaError]     = useState('')
 
   const fetchRecords = async () => {
     try { const r = await gstApi.list(clientId); setRecords(r.data) }
@@ -72,20 +75,9 @@ export default function GSTTab({ clientId, client }) {
 
   useEffect(() => { fetchRecords(); fetchClients() }, [clientId])
 
-  // Listen for data sent back from the GST portal tab via Tampermonkey
-  useEffect(() => {
-    const handler = e => {
-      if (e.data?.type !== 'GST_DATA') return
-      _applyGstData(e.data.data)
-      setWaitingForPortal(false)
-      setShowPortalLink(false)
-    }
-    window.addEventListener('message', handler)
-    return () => window.removeEventListener('message', handler)
-  }, [])
-
   const _resetFetchState = () => {
-    setFetchError(''); setLegalNameWarning(''); setShowPortalLink(false); setWaitingForPortal(false)
+    setFetchError(''); setLegalNameWarning('')
+    setCaptcha(null); setCaptchaText(''); setCaptchaError('')
   }
 
   const openAdd  = () => {
@@ -124,19 +116,57 @@ export default function GSTTab({ clientId, client }) {
   const fetchFromGstin = async () => {
     const gstin = (form.gstin || '').trim().toUpperCase()
     if (gstin.length !== 15) return
-    setFetching(true); setFetchError(''); setLegalNameWarning(''); setShowPortalLink(false)
+    setFetching(true); _resetFetchState()
     try {
       const r = await gstApi.lookup(gstin)
       _applyGstData(r.data)
     } catch (err) {
       const detail = err.response?.data?.detail || ''
       if (detail === 'GST_PORTAL_REQUIRED' || err.response?.status === 503) {
-        setShowPortalLink(true)
+        await loadCaptcha()
       } else {
         setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')
       }
     } finally {
       setFetching(false)
+    }
+  }
+
+  const loadCaptcha = async () => {
+    setCaptcha(null); setCaptchaText(''); setCaptchaError('')
+    try {
+      const r = await gstApi.getCaptcha()
+      setCaptcha({ img: r.data.captcha_image, sessionId: r.data.session_id })
+    } catch {
+      setFetchError('Could not load CAPTCHA. Please fill in manually.')
+    }
+  }
+
+  const submitCaptcha = async () => {
+    const gstin = (form.gstin || '').trim().toUpperCase()
+    if (!captchaText.trim() || !captcha) return
+    setCaptchaVerifying(true); setCaptchaError('')
+    try {
+      const r = await gstApi.verifyCaptcha(captcha.sessionId, gstin, captchaText)
+      _applyGstData(r.data)
+      setCaptcha(null); setCaptchaText('')
+    } catch (err) {
+      const detail = err.response?.data?.detail || ''
+      if (detail === 'CAPTCHA_WRONG') {
+        setCaptchaError('Wrong CAPTCHA — try again.')
+        await loadCaptcha()
+        setCaptchaText('')
+      } else if (detail === 'CAPTCHA_EXPIRED') {
+        setCaptchaError('CAPTCHA expired — reloading.')
+        await loadCaptcha()
+        setCaptchaText('')
+      } else if (detail === 'GSTIN_NOT_FOUND') {
+        setCaptchaError('GSTIN not found on GST portal.')
+      } else {
+        setCaptchaError('Verification failed. Please try again.')
+      }
+    } finally {
+      setCaptchaVerifying(false)
     }
   }
 
@@ -329,52 +359,43 @@ export default function GSTTab({ clientId, client }) {
               {fetchError && (
                 <p className="text-red-600 text-xs mt-1 bg-red-50 px-2 py-1 rounded">{fetchError}</p>
               )}
-              {showPortalLink && !waitingForPortal && (
-                <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
-                  <p className="text-amber-800 text-xs font-medium">Auto-fetch unavailable — CAPTCHA required.</p>
-                  <p className="text-amber-700 text-xs">
-                    Install the Tampermonkey script once, then click "Open GST Portal" — it will auto-fill the GSTIN, and after you solve the CAPTCHA the data will populate here automatically.
-                  </p>
-                  <div className="flex gap-2 flex-wrap">
+              {captcha && (
+                <div className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
+                  <p className="text-xs text-gray-600 font-medium">Enter the CAPTCHA shown below to fetch GST details:</p>
+                  <div className="flex items-center gap-3">
+                    <img src={captcha.img} alt="CAPTCHA" className="h-10 border border-gray-200 rounded bg-white" />
                     <button
                       type="button"
-                      onClick={() => {
-                        const gstin = (form.gstin || '').trim().toUpperCase()
-                        window.open(
-                          `https://services.gst.gov.in/services/searchtp?gstin=${gstin}`,
-                          '_blank'
-                        )
-                        setWaitingForPortal(true)
-                      }}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-amber-600 text-white rounded hover:bg-amber-700 whitespace-nowrap"
+                      onClick={loadCaptcha}
+                      className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
+                      title="Refresh CAPTCHA"
                     >
-                      Open GST Portal
+                      <RefreshCw size={11} /> Refresh
                     </button>
-                    <a
-                      href="/api/gst/tampermonkey.user.js"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium border border-amber-400 text-amber-700 rounded hover:bg-amber-100 whitespace-nowrap"
-                      title="Click to install the Tampermonkey script"
-                    >
-                      Install Script
-                    </a>
                   </div>
-                </div>
-              )}
-              {waitingForPortal && (
-                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-3">
-                  <Loader2 size={14} className="animate-spin text-blue-600 shrink-0" />
-                  <span className="text-blue-700 text-xs flex-1">
-                    Waiting for data from GST portal… Solve the CAPTCHA in the other tab and the fields will auto-populate.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => { setWaitingForPortal(false); setShowPortalLink(true) }}
-                    className="text-xs text-blue-500 hover:text-blue-700 whitespace-nowrap"
-                  >
-                    Cancel
-                  </button>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={captchaText}
+                      onChange={e => setCaptchaText(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && submitCaptcha()}
+                      placeholder="Type CAPTCHA here"
+                      className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={submitCaptcha}
+                      disabled={captchaVerifying || !captchaText.trim()}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-[#1F3864] text-white rounded hover:bg-blue-900 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      {captchaVerifying ? <Loader2 size={11} className="animate-spin" /> : null}
+                      {captchaVerifying ? 'Verifying…' : 'Submit'}
+                    </button>
+                  </div>
+                  {captchaError && (
+                    <p className="text-red-600 text-xs">{captchaError}</p>
+                  )}
                 </div>
               )}
               {legalNameWarning && (

@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
+from pydantic import BaseModel
 import uuid
 import os
 import re
+import base64
+import time
 import logging
 import json as _json
 import httpx
@@ -39,6 +42,20 @@ _GST_HEADERS = {
 _OPTION_B_URLS = [
     "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
 ]
+
+# GST portal URLs for CAPTCHA-based lookup
+_GST_SEARCH_URL  = "https://services.gst.gov.in/services/searchtp"
+_GST_CAPTCHA_URL = "https://services.gst.gov.in/services/captcha"
+_GST_VERIFY_URL  = "https://services.gst.gov.in/services/api/search/taxpayerDetails"
+
+# In-memory store: session_id → { cookies, created_at }
+_captcha_sessions: dict = {}
+_SESSION_TTL = 300  # seconds
+
+def _clean_sessions():
+    now = time.time()
+    for k in [k for k, v in _captcha_sessions.items() if now - v["created_at"] > _SESSION_TTL]:
+        del _captcha_sessions[k]
 
 
 def _addr_str(a: dict) -> str:
@@ -103,6 +120,83 @@ def serve_tampermonkey_script():
     with open(_SCRIPT_PATH, "r", encoding="utf-8") as f:
         content = f.read()
     return Response(content=content, media_type="application/javascript")
+
+
+@router.get("/captcha")
+async def get_captcha(_: User = Depends(get_current_user)):
+    """Fetch a CAPTCHA image from the GST portal. Returns base64 image + session_id."""
+    _clean_sessions()
+    try:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+            await client.get(_GST_SEARCH_URL, headers={"User-Agent": _GST_UA})
+            resp = await client.get(_GST_CAPTCHA_URL, headers={
+                "User-Agent": _GST_UA,
+                "Referer": _GST_SEARCH_URL,
+            })
+            if resp.status_code != 200:
+                raise HTTPException(status_code=503, detail="Could not fetch CAPTCHA from GST portal")
+            session_id = str(uuid.uuid4())
+            _captcha_sessions[session_id] = {
+                "cookies":    dict(client.cookies),
+                "created_at": time.time(),
+            }
+            img_b64 = base64.b64encode(resp.content).decode()
+            return {"session_id": session_id, "captcha_image": f"data:image/png;base64,{img_b64}"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.warning("CAPTCHA fetch failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Could not reach GST portal")
+
+
+class CaptchaVerifyRequest(BaseModel):
+    session_id: str
+    gstin:      str
+    captcha:    str
+
+@router.post("/captcha-verify")
+async def captcha_verify(body: CaptchaVerifyRequest, _: User = Depends(get_current_user)):
+    """Submit GSTIN + solved CAPTCHA to the GST portal and return taxpayer data."""
+    gstin = body.gstin.upper().strip()
+    if not _GSTIN_RE.match(gstin):
+        raise HTTPException(status_code=400, detail="Invalid GSTIN format")
+    if not body.captcha.strip():
+        raise HTTPException(status_code=400, detail="CAPTCHA solution required")
+
+    session = _captcha_sessions.pop(body.session_id, None)
+    if not session:
+        raise HTTPException(status_code=400, detail="CAPTCHA_EXPIRED")
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=10, follow_redirects=True,
+            cookies=session["cookies"],
+        ) as client:
+            resp = await client.post(
+                _GST_VERIFY_URL,
+                json={"gstin": gstin, "captcha": body.captcha.strip()},
+                headers={
+                    "User-Agent":   _GST_UA,
+                    "Content-Type": "application/json",
+                    "Referer":      _GST_SEARCH_URL,
+                    "Origin":       "https://services.gst.gov.in",
+                },
+            )
+    except Exception as exc:
+        _log.warning("CAPTCHA verify request failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Could not reach GST portal")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=422, detail="CAPTCHA_WRONG")
+
+    raw = resp.json()
+    if not _has_taxpayer_data(raw):
+        msg = (raw.get("message") or raw.get("errorMessage") or "").lower()
+        if "captcha" in msg:
+            raise HTTPException(status_code=422, detail="CAPTCHA_WRONG")
+        raise HTTPException(status_code=422, detail="GSTIN_NOT_FOUND")
+
+    return _parse_gst_response(raw)
 
 
 @router.get("/lookup/{gstin}")
