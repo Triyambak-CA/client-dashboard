@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 import uuid
-import os
 import re
 import time
 import base64
@@ -224,21 +223,7 @@ async def lookup_gstin(
             except Exception:
                 continue
 
-        # ── Option A: third-party API (env-var configured) ──────────────────
-        api_key = os.getenv("GSTIN_API_KEY", "")
-        api_url  = os.getenv("GSTIN_API_URL", "")
-        if api_key and api_url:
-            try:
-                resp = await client.get(
-                    f"{api_url.rstrip('/')}/{gstin}",
-                    headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-                )
-                if resp.status_code == 200:
-                    return _parse_gst_response(resp.json())
-            except Exception:
-                pass
-
-    # All automatic methods failed — signal the frontend to offer CAPTCHA
+    # Option B failed — signal the frontend to offer CAPTCHA
     raise HTTPException(
         status_code=503,
         detail="CAPTCHA_REQUIRED",
