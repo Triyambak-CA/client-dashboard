@@ -147,7 +147,7 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
 
         session_id = str(uuid.uuid4())
         _captcha_sessions[session_id] = {
-            "cookies": {c.name: c.value for c in session.cookies},
+            "cookies": dict(session.cookies),
             "expires_at": now + _SESSION_TTL,
         }
 

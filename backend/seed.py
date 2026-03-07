@@ -39,6 +39,30 @@ def run_schema_sql():
                 conn.rollback()  # enum/table already exists — safe to skip
 
 
+def run_migrations():
+    """Run all SQL migration files from database/migrations/ (sorted by name).
+    Each migration should use IF NOT EXISTS so re-runs are safe."""
+    migrations_dir = os.path.join(os.path.dirname(__file__), "..", "database", "migrations")
+    if not os.path.isdir(migrations_dir):
+        return
+    for fname in sorted(os.listdir(migrations_dir)):
+        if not fname.endswith(".sql"):
+            continue
+        with open(os.path.join(migrations_dir, fname)) as f:
+            sql = f.read()
+        with engine.connect() as conn:
+            for stmt in sql.split(";"):
+                stmt = stmt.strip()
+                if not stmt:
+                    continue
+                try:
+                    conn.execute(text(stmt))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+        print(f"Migration {fname} applied")
+
+
 def seed_admin():
     from models import User
     db = SessionLocal()
@@ -63,5 +87,6 @@ def seed_admin():
 if __name__ == "__main__":
     print("Running DB seed...")
     run_schema_sql()
+    run_migrations()
     seed_admin()
     print("Seed complete")
