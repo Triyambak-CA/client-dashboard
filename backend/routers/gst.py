@@ -187,26 +187,27 @@ async def lookup_gstin(
         cookies = session["cookies"]
         portal_err = "no response"
 
-        # Use curl_cffi to bypass Akamai WAF TLS fingerprint detection (POST always 405)
+        # Use curl_cffi to bypass Akamai WAF TLS fingerprint detection
         async with CurlSession(impersonate="chrome120") as curl:
             # Restore session cookies so the portal recognises the CAPTCHA session
             for name, value in cookies.items():
                 curl.cookies.set(name, value, domain="services.gst.gov.in")
 
             try:
-                resp = await curl.get(
+                resp = await curl.post(
                     _CAPTCHA_SEARCH_URL,
-                    params={"gstin": gstin, "captcha": captcha.strip()},
-                    headers=_GST_HEADERS,
+                    json={"gstin": gstin, "captcha": captcha.strip()},
+                    headers={**_GST_HEADERS, "Content-Type": "application/json"},
                 )
-                portal_err = f"GET {resp.status_code}: {resp.text[:400]}"
-                if resp.status_code == 200:
+                body = resp.text or ""
+                portal_err = f"POST {resp.status_code}: {body[:400]}"
+                if resp.status_code == 200 and body.strip():
                     raw = resp.json()
                     if _has_taxpayer_data(raw):
                         del _captcha_sessions[session_id]
                         return _parse_gst_response(raw)
             except Exception as e:
-                portal_err = f"GET exception: {e}"
+                portal_err = f"POST exception: {e}"
 
         _log.warning("GST CAPTCHA lookup failed for %s: %s", gstin, portal_err)
         raise HTTPException(
