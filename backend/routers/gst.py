@@ -1,6 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 import uuid
+import os
+import re
+import httpx
+from datetime import datetime as dt
 
 from database import get_db
 from models import GSTRegistration, GSTSignatory, Client
@@ -12,6 +16,117 @@ import crypto
 router = APIRouter(prefix="/gst", tags=["GST Registrations"])
 
 ENCRYPTED_FIELDS = ["gst_password", "ewb_password", "ewb_api_password"]
+
+# ── GSTIN Lookup ──────────────────────────────────────────────────────────────
+
+_GSTIN_RE = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
+
+_GST_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://services.gst.gov.in/services/searchtp",
+    "Origin": "https://services.gst.gov.in",
+}
+
+# Candidate URLs for Option B (unofficial, no CAPTCHA)
+_OPTION_B_URLS = [
+    "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
+    "https://services.gst.gov.in/services/api/public/commonapi/searchbygstin?gstin={gstin}",
+]
+
+
+def _addr_str(a: dict) -> str:
+    parts = [a.get("bnm"), a.get("bno"), a.get("flno"), a.get("st"),
+             a.get("loc"), a.get("dst"), a.get("stcd")]
+    pin = a.get("pncd", "")
+    joined = ", ".join(p for p in parts if p)
+    return f"{joined} - {pin}" if pin else joined
+
+
+def _parse_gst_response(raw: dict) -> dict:
+    """Normalise GST portal / third-party API response into a flat dict."""
+    data = raw.get("data", raw)
+    # Some APIs nest under taxpayerInfo or similar
+    if not data.get("lgnm") and not data.get("legal_name"):
+        data = raw.get("taxpayerInfo", raw)
+
+    pradr = data.get("pradr", {})
+    addr_parts = pradr.get("addr", {}) if isinstance(pradr, dict) else {}
+    principal_address = _addr_str(addr_parts) if addr_parts else (pradr.get("adr") if isinstance(pradr, dict) else None)
+
+    nob = data.get("nob", [])
+    if isinstance(nob, list):
+        nob = ", ".join(n for n in nob if n)
+
+    reg_date = data.get("rgdt") or data.get("registration_date")
+    can_date = data.get("cxdt") or data.get("cancellation_date")
+    if can_date in (None, "NA", "", "null"):
+        can_date = None
+
+    einv = data.get("einvoiceStatus")
+    if einv is not None:
+        einv = str(einv).strip().lower() in ("yes", "true", "1", "applicable")
+    else:
+        einv = None
+
+    return {
+        "legal_name":           data.get("lgnm") or data.get("legal_name"),
+        "trade_name":           data.get("tradeNam") or data.get("tradeName") or data.get("trade_name"),
+        "gstin_status":         data.get("sts") or data.get("status"),
+        "state":                data.get("stj") or addr_parts.get("stcd"),
+        "state_code":           (data.get("gstin", "") or "")[:2] or None,
+        "registration_type":    data.get("dty") or data.get("registration_type"),
+        "registration_date":    reg_date,
+        "cancellation_date":    can_date,
+        "principal_address":    principal_address,
+        "nature_of_business":   nob or None,
+        "einvoice_applicable":  einv,
+        "last_fetched_at":      dt.utcnow().isoformat(),
+    }
+
+
+@router.get("/lookup/{gstin}")
+async def lookup_gstin(
+    gstin: str,
+    _:     User    = Depends(get_current_user),
+):
+    """Fetch taxpayer data from the GST portal by GSTIN (no CAPTCHA for basic lookup)."""
+    gstin = gstin.upper().strip()
+    if not _GSTIN_RE.match(gstin):
+        raise HTTPException(status_code=400, detail="Invalid GSTIN format")
+
+    # Option B — try unofficial GST portal endpoints
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        for url_tpl in _OPTION_B_URLS:
+            try:
+                resp = await client.get(url_tpl.format(gstin=gstin), headers=_GST_HEADERS)
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    # Verify the response actually has taxpayer data
+                    data = raw.get("data", raw)
+                    if data.get("lgnm") or data.get("legal_name") or data.get("tradeNam"):
+                        return _parse_gst_response(raw)
+            except Exception:
+                continue
+
+        # Option A — third-party API fallback (configure via env vars)
+        api_key = os.getenv("GSTIN_API_KEY", "")
+        api_url = os.getenv("GSTIN_API_URL", "")
+        if api_key and api_url:
+            try:
+                resp = await client.get(
+                    f"{api_url.rstrip('/')}/{gstin}",
+                    headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+                )
+                if resp.status_code == 200:
+                    return _parse_gst_response(resp.json())
+            except Exception:
+                pass
+
+    raise HTTPException(
+        status_code=503,
+        detail="Could not fetch from GST portal. The portal may require CAPTCHA or is unavailable. Please fill in manually, or configure GSTIN_API_KEY + GSTIN_API_URL env vars for a third-party fallback.",
+    )
 
 
 def _encrypt(data: dict) -> dict:

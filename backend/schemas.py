@@ -184,38 +184,52 @@ class ClientResponse(ClientCreate):
 # ── GST Registrations ─────────────────────────────────────────────────────────
 
 class GSTCreate(BaseModel):
-    client_id:         uuid.UUID
-    gstin:             str
-    state:             Optional[str] = None
-    state_code:        Optional[str] = None
-    registration_type: Optional[str] = None
-    registration_date: Optional[date] = None
-    cancellation_date: Optional[date] = None
-    is_active:         bool = True
-    gst_user_id:       Optional[str] = None
-    gst_password:      Optional[str] = None
-    ewb_user_id:       Optional[str] = None
-    ewb_password:      Optional[str] = None
-    ewb_api_user_id:   Optional[str] = None
-    ewb_api_password:  Optional[str] = None
-    notes:             Optional[str] = None
+    client_id:           uuid.UUID
+    gstin:               str
+    state:               Optional[str] = None
+    state_code:          Optional[str] = None
+    registration_type:   Optional[str] = None
+    registration_date:   Optional[date] = None
+    cancellation_date:   Optional[date] = None
+    is_active:           bool = True
+    gst_user_id:         Optional[str] = None
+    gst_password:        Optional[str] = None
+    ewb_user_id:         Optional[str] = None
+    ewb_password:        Optional[str] = None
+    ewb_api_user_id:     Optional[str] = None
+    ewb_api_password:    Optional[str] = None
+    # GST portal lookup data
+    trade_name:          Optional[str]      = None
+    gstin_status:        Optional[str]      = None
+    principal_address:   Optional[str]      = None
+    nature_of_business:  Optional[str]      = None
+    einvoice_applicable: Optional[bool]     = None
+    last_fetched_at:     Optional[datetime] = None
+    notes:               Optional[str]      = None
 
 
 class GSTUpdate(BaseModel):
-    gstin:             Optional[str]  = None
-    state:             Optional[str]  = None
-    state_code:        Optional[str]  = None
-    registration_type: Optional[str]  = None
-    registration_date: Optional[date] = None
-    cancellation_date: Optional[date] = None
-    is_active:         Optional[bool] = None
-    gst_user_id:       Optional[str]  = None
-    gst_password:      Optional[str]  = None
-    ewb_user_id:       Optional[str]  = None
-    ewb_password:      Optional[str]  = None
-    ewb_api_user_id:   Optional[str]  = None
-    ewb_api_password:  Optional[str]  = None
-    notes:             Optional[str]  = None
+    gstin:               Optional[str]  = None
+    state:               Optional[str]  = None
+    state_code:          Optional[str]  = None
+    registration_type:   Optional[str]  = None
+    registration_date:   Optional[date] = None
+    cancellation_date:   Optional[date] = None
+    is_active:           Optional[bool] = None
+    gst_user_id:         Optional[str]  = None
+    gst_password:        Optional[str]  = None
+    ewb_user_id:         Optional[str]  = None
+    ewb_password:        Optional[str]  = None
+    ewb_api_user_id:     Optional[str]  = None
+    ewb_api_password:    Optional[str]  = None
+    # GST portal lookup data
+    trade_name:          Optional[str]      = None
+    gstin_status:        Optional[str]      = None
+    principal_address:   Optional[str]      = None
+    nature_of_business:  Optional[str]      = None
+    einvoice_applicable: Optional[bool]     = None
+    last_fetched_at:     Optional[datetime] = None
+    notes:               Optional[str]      = None
 
 
 class GSTSignatoryInfo(BaseModel):
@@ -239,12 +253,20 @@ class GSTResponse(GSTCreate):
 
 
 class GSTListItem(BaseModel):
-    id:                uuid.UUID
-    client_id:         uuid.UUID
-    gstin:             str
-    state:             Optional[str] = None
-    registration_type: Optional[str] = None
-    is_active:         bool
+    id:                  uuid.UUID
+    client_id:           uuid.UUID
+    gstin:               str
+    state:               Optional[str]  = None
+    registration_type:   Optional[str]  = None
+    registration_date:   Optional[date] = None
+    cancellation_date:   Optional[date] = None
+    trade_name:          Optional[str]  = None
+    gstin_status:        Optional[str]  = None
+    principal_address:   Optional[str]  = None
+    nature_of_business:  Optional[str]  = None
+    einvoice_applicable: Optional[bool] = None
+    last_fetched_at:     Optional[datetime] = None
+    is_active:           bool
 
     model_config = ConfigDict(from_attributes=True)
 

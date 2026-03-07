@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { clientsApi } from '../api'
+import { clientsApi, gstApi } from '../api'
 import Modal from './Modal'
 
 const CONSTITUTIONS = ['Individual', 'Company', 'LLP', 'Partnership Firm', 'HUF', 'Trust', 'AOP', 'BOI']
@@ -55,6 +55,33 @@ export default function ClientForm({ client, onClose, onSaved, inline, quick: in
   const [loading, setLoading] = useState(false)
   const [error, setError]   = useState('')
   const [quick, setQuick]   = useState(!isEdit && !!initialQuick)
+
+  // GSTIN pre-fill (helper — not saved as a client field)
+  const [gstinLookup, setGstinLookup]           = useState('')
+  const [gstinLookupLoading, setGstinLookupLoading] = useState(false)
+  const [gstinLookupMsg, setGstinLookupMsg]     = useState({ type: '', text: '' })
+
+  const prefillFromGstin = async () => {
+    const g = gstinLookup.trim().toUpperCase()
+    if (g.length !== 15) return
+    setGstinLookupLoading(true); setGstinLookupMsg({ type: '', text: '' })
+    try {
+      const r = await gstApi.lookup(g)
+      const d = r.data
+      setForm(f => ({
+        ...f,
+        legal_name:    f.legal_name    || d.legal_name    || f.legal_name,
+        address_line1: f.address_line1 || d.principal_address || f.address_line1,
+        state:         f.state         || d.state         || f.state,
+        pin_code:      f.pin_code      || (d.principal_address?.match(/\d{6}/)?.[0]) || f.pin_code,
+      }))
+      setGstinLookupMsg({ type: 'ok', text: 'Fields pre-filled from GST portal. Review and adjust as needed.' })
+    } catch (err) {
+      setGstinLookupMsg({ type: 'err', text: err.response?.data?.detail || 'Could not fetch from GST portal.' })
+    } finally {
+      setGstinLookupLoading(false)
+    }
+  }
 
   const handle = e => {
     const { name, value, type, checked } = e.target
@@ -120,6 +147,32 @@ export default function ClientForm({ client, onClose, onSaved, inline, quick: in
           <Field label="Direct Client?"  name="is_direct_client" value={form.is_direct_client} onChange={handle} type="checkbox" />
           <Field label="Active?"         name="is_active"        value={form.is_active}        onChange={handle} type="checkbox" />
           <Field label="On Retainer?"    name="is_on_retainer"   value={form.is_on_retainer}   onChange={handle} type="checkbox" />
+        </div>
+        {/* GSTIN pre-fill helper */}
+        <div className="md:col-span-2">
+          <label className="block text-xs font-medium text-gray-600 mb-1">
+            Pre-fill from GSTIN <span className="font-normal text-gray-400">(optional — auto-fills legal name, address)</span>
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text" value={gstinLookup}
+              onChange={e => { setGstinLookup(e.target.value.toUpperCase()); setGstinLookupMsg({ type: '', text: '' }) }}
+              maxLength={15} placeholder="Enter any GSTIN for this client"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button
+              type="button" onClick={prefillFromGstin}
+              disabled={gstinLookupLoading || gstinLookup.trim().length !== 15}
+              className="px-4 py-2 text-xs font-medium rounded-lg border border-[#1F3864] text-[#1F3864] hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              {gstinLookupLoading ? 'Fetching…' : 'Pre-fill'}
+            </button>
+          </div>
+          {gstinLookupMsg.text && (
+            <p className={`text-xs mt-1 px-2 py-1 rounded ${gstinLookupMsg.type === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {gstinLookupMsg.text}
+            </p>
+          )}
         </div>
       </FormSection>
 
