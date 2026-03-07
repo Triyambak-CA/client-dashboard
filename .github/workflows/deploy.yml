@@ -44,7 +44,7 @@ jobs:
           host: ${{ secrets.GCE_HOST }}
           username: ${{ secrets.GCE_USER }}
           key: ${{ secrets.GCE_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 20m
           envs: DB_PASSWORD,SECRET_KEY,CREDENTIAL_ENCRYPTION_KEY
           script: |
             cd $HOME/client-dashboard
