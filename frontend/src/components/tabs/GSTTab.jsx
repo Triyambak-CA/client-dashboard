@@ -124,8 +124,7 @@ export default function GSTTab({ clientId, client }) {
     } catch (err) {
       const detail = err.response?.data?.detail || ''
       if (detail === 'CAPTCHA_REQUIRED' || err.response?.status === 503) {
-        // Auto-fetch failed — offer CAPTCHA fallback
-        setFetchError('Automatic fetch failed. Solve the CAPTCHA below to fetch from the GST portal.')
+        // Auto-fetch unavailable — silently switch to CAPTCHA without a misleading error
         loadCaptcha()
       } else {
         setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')

@@ -4,9 +4,12 @@ import uuid
 import re
 import time
 import base64
+import logging
 import httpx
 from datetime import datetime as dt
 from typing import Optional
+
+_log = logging.getLogger(__name__)
 
 from database import get_db
 from models import GSTRegistration, GSTSignatory, Client
@@ -32,10 +35,9 @@ _GST_HEADERS = {
     "Origin": "https://services.gst.gov.in",
 }
 
-# Option B — unofficial endpoints (no CAPTCHA)
+# Option B — unofficial endpoints (no CAPTCHA); these are often blocked, kept as fast-fail
 _OPTION_B_URLS = [
     "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
-    "https://services.gst.gov.in/services/api/public/commonapi/searchbygstin?gstin={gstin}",
 ]
 
 # Option C — official GST portal CAPTCHA-based search
@@ -115,7 +117,18 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
     for k in expired:
         del _captcha_sessions[k]
 
-    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        # Establish a portal session first — the GST portal sets a session cookie on the
+        # search page that the CAPTCHA image is then bound to. Skipping this step causes
+        # captcha submissions to always be rejected as invalid.
+        try:
+            await client.get(
+                "https://services.gst.gov.in/services/searchtp",
+                headers={"User-Agent": _GST_UA, "Accept": "text/html,*/*"},
+            )
+        except Exception:
+            pass  # best-effort; proceed even if unreachable
+
         try:
             resp = await client.get(
                 _CAPTCHA_IMG_URL,
@@ -128,14 +141,16 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"Could not reach GST portal: {exc}")
 
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail="GST portal returned an error while fetching CAPTCHA.")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="GST portal returned an error while fetching CAPTCHA.")
 
-    session_id = str(uuid.uuid4())
-    _captcha_sessions[session_id] = {
-        "cookies": dict(resp.cookies),
-        "expires_at": now + _SESSION_TTL,
-    }
+        session_id = str(uuid.uuid4())
+        # Use client.cookies (full session jar) instead of resp.cookies (final response only).
+        # This captures any cookies set during the search-page visit and intermediate redirects.
+        _captcha_sessions[session_id] = {
+            "cookies": dict(client.cookies),
+            "expires_at": now + _SESSION_TTL,
+        }
 
     content_type = resp.headers.get("content-type", "image/png").split(";")[0]
     image_b64 = base64.b64encode(resp.content).decode()
@@ -161,20 +176,20 @@ async def lookup_gstin(
     if not _GSTIN_RE.match(gstin):
         raise HTTPException(status_code=400, detail="Invalid GSTIN format")
 
-    async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+    # ── Option C: CAPTCHA-authenticated search ───────────────────────────────
+    if session_id and captcha:
+        session = _captcha_sessions.get(session_id)
+        if not session:
+            raise HTTPException(status_code=400, detail="CAPTCHA session expired or invalid. Please refresh the CAPTCHA and try again.")
+        if session["expires_at"] < time.time():
+            del _captcha_sessions[session_id]
+            raise HTTPException(status_code=400, detail="CAPTCHA session expired. Please refresh the CAPTCHA and try again.")
 
-        # ── Option C: CAPTCHA-authenticated search ──────────────────────────
-        if session_id and captcha:
-            session = _captcha_sessions.get(session_id)
-            if not session:
-                raise HTTPException(status_code=400, detail="CAPTCHA session expired or invalid. Please refresh the CAPTCHA and try again.")
-            if session["expires_at"] < time.time():
-                del _captcha_sessions[session_id]
-                raise HTTPException(status_code=400, detail="CAPTCHA session expired. Please refresh the CAPTCHA and try again.")
+        cookies = session["cookies"]
+        headers = {**_GST_HEADERS, "Content-Type": "application/json"}
+        portal_err = "no response"
 
-            cookies = session["cookies"]
-            headers = {**_GST_HEADERS, "Content-Type": "application/json"}
-
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
             # Try POST with JSON body (most common GST portal pattern)
             try:
                 resp = await client.post(
@@ -183,13 +198,14 @@ async def lookup_gstin(
                     headers=headers,
                     cookies=cookies,
                 )
+                portal_err = f"POST {resp.status_code}: {resp.text[:400]}"
                 if resp.status_code == 200:
                     raw = resp.json()
                     if _has_taxpayer_data(raw):
                         del _captcha_sessions[session_id]  # consume session
                         return _parse_gst_response(raw)
-            except Exception:
-                pass
+            except Exception as e:
+                portal_err = f"POST exception: {e}"
 
             # Fallback: GET with query params + captcha
             try:
@@ -199,20 +215,23 @@ async def lookup_gstin(
                     headers=_GST_HEADERS,
                     cookies=cookies,
                 )
+                portal_err += f" | GET {resp.status_code}: {resp.text[:400]}"
                 if resp.status_code == 200:
                     raw = resp.json()
                     if _has_taxpayer_data(raw):
                         del _captcha_sessions[session_id]
                         return _parse_gst_response(raw)
-            except Exception:
-                pass
+            except Exception as e:
+                portal_err += f" | GET exception: {e}"
 
-            raise HTTPException(
-                status_code=422,
-                detail="CAPTCHA answer was incorrect or the GST portal rejected the request. Please try again with a fresh CAPTCHA.",
-            )
+        _log.warning("GST CAPTCHA lookup failed for %s: %s", gstin, portal_err)
+        raise HTTPException(
+            status_code=422,
+            detail=f"CAPTCHA answer was incorrect or the GST portal rejected the request. Please try again with a fresh CAPTCHA. (debug: {portal_err})",
+        )
 
-        # ── Option B: unofficial endpoints (no CAPTCHA) ─────────────────────
+    # ── Option B: unofficial endpoints (no CAPTCHA) — fast-fail ─────────────
+    async with httpx.AsyncClient(timeout=5, follow_redirects=True) as client:
         for url_tpl in _OPTION_B_URLS:
             try:
                 resp = await client.get(url_tpl.format(gstin=gstin), headers=_GST_HEADERS)
