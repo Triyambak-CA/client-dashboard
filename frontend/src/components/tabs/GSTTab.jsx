@@ -57,6 +57,12 @@ export default function GSTTab({ clientId, client }) {
   const [fetching,          setFetching]          = useState(false)
   const [fetchError,        setFetchError]        = useState('')
   const [legalNameWarning,  setLegalNameWarning]  = useState('')
+  // CAPTCHA fallback state
+  const [showCaptcha,       setShowCaptcha]       = useState(false)
+  const [captchaImage,      setCaptchaImage]      = useState('')
+  const [captchaSessionId,  setCaptchaSessionId]  = useState('')
+  const [captchaAnswer,     setCaptchaAnswer]     = useState('')
+  const [captchaLoading,    setCaptchaLoading]    = useState(false)
 
   const fetchRecords = async () => {
     try { const r = await gstApi.list(clientId); setRecords(r.data) }
@@ -70,46 +76,97 @@ export default function GSTTab({ clientId, client }) {
 
   useEffect(() => { fetchRecords(); fetchClients() }, [clientId])
 
+  const _resetFetchState = () => {
+    setFetchError(''); setLegalNameWarning('')
+    setShowCaptcha(false); setCaptchaImage(''); setCaptchaSessionId(''); setCaptchaAnswer('')
+  }
+
   const openAdd  = () => {
     setForm({ client_id: clientId, is_active: true })
-    setEditing(null); setFetchError(''); setLegalNameWarning(''); setModal('add')
+    setEditing(null); _resetFetchState(); setModal('add')
   }
   const openEdit = rec => {
     setForm({ ...rec })
-    setEditing(rec); setFetchError(''); setLegalNameWarning(''); setModal('edit')
+    setEditing(rec); _resetFetchState(); setModal('edit')
+  }
+
+  const _applyGstData = d => {
+    setForm(f => ({
+      ...f,
+      state:               d.state               || f.state,
+      state_code:          d.state_code          || f.state_code,
+      registration_type:   _mapRegType(d.registration_type) || f.registration_type,
+      gstin_status:        d.gstin_status        ?? f.gstin_status,
+      registration_date:   d.registration_date   || f.registration_date,
+      cancellation_date:   d.cancellation_date   || f.cancellation_date,
+      trade_name:          d.trade_name          ?? f.trade_name,
+      principal_address:   d.principal_address   ?? f.principal_address,
+      nature_of_business:  d.nature_of_business  ?? f.nature_of_business,
+      einvoice_applicable: d.einvoice_applicable ?? f.einvoice_applicable,
+      last_fetched_at:     d.last_fetched_at     || f.last_fetched_at,
+    }))
+    const gstLegal    = (d.legal_name || '').trim()
+    const clientLegal = (client?.legal_name || '').trim()
+    if (gstLegal && clientLegal && gstLegal.toLowerCase() !== clientLegal.toLowerCase()) {
+      setLegalNameWarning(`GST portal legal name: "${gstLegal}" — differs from master record: "${clientLegal}"`)
+    } else if (!clientLegal && gstLegal) {
+      setLegalNameWarning(`Legal name not set on master record. GST portal shows: "${gstLegal}"`)
+    }
   }
 
   const fetchFromGstin = async () => {
     const gstin = (form.gstin || '').trim().toUpperCase()
     if (gstin.length !== 15) return
-    setFetching(true); setFetchError(''); setLegalNameWarning('')
+    setFetching(true); setFetchError(''); setLegalNameWarning(''); setShowCaptcha(false)
     try {
       const r = await gstApi.lookup(gstin)
-      const d = r.data
-      setForm(f => ({
-        ...f,
-        state:               d.state               || f.state,
-        state_code:          d.state_code          || f.state_code,
-        registration_type:   _mapRegType(d.registration_type) || f.registration_type,
-        gstin_status:        d.gstin_status        ?? f.gstin_status,
-        registration_date:   d.registration_date   || f.registration_date,
-        cancellation_date:   d.cancellation_date   || f.cancellation_date,
-        trade_name:          d.trade_name          ?? f.trade_name,
-        principal_address:   d.principal_address   ?? f.principal_address,
-        nature_of_business:  d.nature_of_business  ?? f.nature_of_business,
-        einvoice_applicable: d.einvoice_applicable ?? f.einvoice_applicable,
-        last_fetched_at:     d.last_fetched_at     || f.last_fetched_at,
-      }))
-      // Legal name comparison — flag mismatch if both exist
-      const gstLegal    = (d.legal_name || '').trim()
-      const clientLegal = (client?.legal_name || '').trim()
-      if (gstLegal && clientLegal && gstLegal.toLowerCase() !== clientLegal.toLowerCase()) {
-        setLegalNameWarning(`GST portal legal name: "${gstLegal}" — differs from master record: "${clientLegal}"`)
-      } else if (!clientLegal && gstLegal) {
-        setLegalNameWarning(`Legal name not set on master record. GST portal shows: "${gstLegal}"`)
-      }
+      _applyGstData(r.data)
     } catch (err) {
-      setFetchError(err.response?.data?.detail || 'Could not fetch from GST portal. Please fill in manually.')
+      const detail = err.response?.data?.detail || ''
+      if (detail === 'CAPTCHA_REQUIRED' || err.response?.status === 503) {
+        // Auto-fetch failed — offer CAPTCHA fallback
+        setFetchError('Automatic fetch failed. Solve the CAPTCHA below to fetch from the GST portal.')
+        loadCaptcha()
+      } else {
+        setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')
+      }
+    } finally {
+      setFetching(false)
+    }
+  }
+
+  const loadCaptcha = async () => {
+    setCaptchaLoading(true); setCaptchaImage(''); setCaptchaAnswer('')
+    try {
+      const r = await gstApi.getCaptcha()
+      setCaptchaImage(r.data.image)
+      setCaptchaSessionId(r.data.session_id)
+      setShowCaptcha(true)
+    } catch {
+      setFetchError('Could not load CAPTCHA from GST portal. Please fill in the fields manually.')
+    } finally {
+      setCaptchaLoading(false)
+    }
+  }
+
+  const submitWithCaptcha = async () => {
+    const gstin = (form.gstin || '').trim().toUpperCase()
+    if (!captchaAnswer.trim() || !captchaSessionId) return
+    setFetching(true); setFetchError('')
+    try {
+      const r = await gstApi.lookupWithCaptcha(gstin, captchaSessionId, captchaAnswer.trim())
+      _applyGstData(r.data)
+      setShowCaptcha(false); setCaptchaImage(''); setCaptchaAnswer(''); setCaptchaSessionId('')
+    } catch (err) {
+      const detail = err.response?.data?.detail || ''
+      if (err.response?.status === 422) {
+        // Wrong captcha — reload a fresh one
+        setFetchError(detail || 'CAPTCHA incorrect. Please try again.')
+        loadCaptcha()
+      } else {
+        setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')
+        setShowCaptcha(false)
+      }
     } finally {
       setFetching(false)
     }
@@ -308,6 +365,45 @@ export default function GSTTab({ clientId, client }) {
                 <p className="text-amber-700 text-xs mt-1 bg-amber-50 px-2 py-1.5 rounded border border-amber-200">
                   ⚠ {legalNameWarning}
                 </p>
+              )}
+              {/* CAPTCHA fallback */}
+              {showCaptcha && (
+                <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+                  <p className="text-xs font-medium text-blue-800">Solve the CAPTCHA to fetch from GST portal:</p>
+                  <div className="flex items-center gap-3">
+                    {captchaLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-gray-400">
+                        <Loader2 size={14} className="animate-spin" /> Loading CAPTCHA…
+                      </div>
+                    ) : captchaImage ? (
+                      <img src={captchaImage} alt="CAPTCHA" className="h-12 rounded border border-blue-200 bg-white" />
+                    ) : null}
+                    <button
+                      type="button" onClick={loadCaptcha} disabled={captchaLoading}
+                      className="text-xs text-blue-600 hover:underline disabled:opacity-40 flex items-center gap-1"
+                      title="Refresh CAPTCHA"
+                    >
+                      <RefreshCw size={11} /> Refresh
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text" value={captchaAnswer}
+                      onChange={e => setCaptchaAnswer(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), submitWithCaptcha())}
+                      placeholder="Type CAPTCHA text here"
+                      className="flex-1 border border-blue-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      autoFocus
+                    />
+                    <button
+                      type="button" onClick={submitWithCaptcha}
+                      disabled={fetching || !captchaAnswer.trim()}
+                      className="px-3 py-1.5 text-xs font-medium rounded-lg bg-[#1F3864] text-white hover:bg-[#162848] disabled:opacity-40"
+                    >
+                      {fetching ? 'Fetching…' : 'Submit'}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
 
