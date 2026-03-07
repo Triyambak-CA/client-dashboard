@@ -1,6 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 import uuid
+import re
+import time
+import base64
+import httpx
+from datetime import datetime as dt
+from typing import Optional
 
 from database import get_db
 from models import GSTRegistration, GSTSignatory, Client
@@ -12,6 +18,216 @@ import crypto
 router = APIRouter(prefix="/gst", tags=["GST Registrations"])
 
 ENCRYPTED_FIELDS = ["gst_password", "ewb_password", "ewb_api_password"]
+
+# ── GSTIN Lookup ──────────────────────────────────────────────────────────────
+
+_GSTIN_RE = re.compile(r"^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$")
+
+_GST_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+_GST_HEADERS = {
+    "User-Agent": _GST_UA,
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://services.gst.gov.in/services/searchtp",
+    "Origin": "https://services.gst.gov.in",
+}
+
+# Option B — unofficial endpoints (no CAPTCHA)
+_OPTION_B_URLS = [
+    "https://api.gst.gov.in/commonsvcs/gstsearchdata/searchByGstin?gstin={gstin}",
+    "https://services.gst.gov.in/services/api/public/commonapi/searchbygstin?gstin={gstin}",
+]
+
+# Option C — official GST portal CAPTCHA-based search
+_CAPTCHA_IMG_URL   = "https://services.gst.gov.in/services/captcha"
+_CAPTCHA_SEARCH_URL = "https://services.gst.gov.in/services/api/public/commonapi/searchbygstin"
+
+# In-memory captcha session store  {session_id: {cookies, expires_at}}
+# Entries are short-lived (5 min) and pruned on each captcha request
+_captcha_sessions: dict = {}
+_SESSION_TTL = 300  # seconds
+
+
+def _addr_str(a: dict) -> str:
+    parts = [a.get("bnm"), a.get("bno"), a.get("flno"), a.get("st"),
+             a.get("loc"), a.get("dst"), a.get("stcd")]
+    pin = a.get("pncd", "")
+    joined = ", ".join(p for p in parts if p)
+    return f"{joined} - {pin}" if pin else joined
+
+
+def _parse_gst_response(raw: dict) -> dict:
+    """Normalise GST portal / third-party API response into a flat dict."""
+    data = raw.get("data", raw)
+    if not data.get("lgnm") and not data.get("legal_name"):
+        data = raw.get("taxpayerInfo", raw)
+
+    pradr = data.get("pradr", {})
+    addr_parts = pradr.get("addr", {}) if isinstance(pradr, dict) else {}
+    principal_address = _addr_str(addr_parts) if addr_parts else (pradr.get("adr") if isinstance(pradr, dict) else None)
+
+    nob = data.get("nob", [])
+    if isinstance(nob, list):
+        nob = ", ".join(n for n in nob if n)
+
+    reg_date = data.get("rgdt") or data.get("registration_date")
+    can_date = data.get("cxdt") or data.get("cancellation_date")
+    if can_date in (None, "NA", "", "null"):
+        can_date = None
+
+    einv = data.get("einvoiceStatus")
+    if einv is not None:
+        einv = str(einv).strip().lower() in ("yes", "true", "1", "applicable")
+    else:
+        einv = None
+
+    return {
+        "legal_name":           data.get("lgnm") or data.get("legal_name"),
+        "trade_name":           data.get("tradeNam") or data.get("tradeName") or data.get("trade_name"),
+        "gstin_status":         data.get("sts") or data.get("status"),
+        "state":                data.get("stj") or addr_parts.get("stcd"),
+        "state_code":           (data.get("gstin", "") or "")[:2] or None,
+        "registration_type":    data.get("dty") or data.get("registration_type"),
+        "registration_date":    reg_date,
+        "cancellation_date":    can_date,
+        "principal_address":    principal_address,
+        "nature_of_business":   nob or None,
+        "einvoice_applicable":  einv,
+        "last_fetched_at":      dt.utcnow().isoformat(),
+    }
+
+
+def _has_taxpayer_data(raw: dict) -> bool:
+    data = raw.get("data", raw)
+    return bool(data.get("lgnm") or data.get("legal_name") or data.get("tradeNam"))
+
+
+@router.get("/captcha")
+async def get_gst_captcha(_: User = Depends(get_current_user)):
+    """
+    Fetch a CAPTCHA image from the GST portal.
+    Returns {session_id, image} where image is a data-URI (base64).
+    Pass session_id + solved captcha text to /gst/lookup/{gstin} to search.
+    """
+    now = time.time()
+    # Prune expired sessions
+    expired = [k for k, v in _captcha_sessions.items() if v["expires_at"] < now]
+    for k in expired:
+        del _captcha_sessions[k]
+
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        try:
+            resp = await client.get(
+                _CAPTCHA_IMG_URL,
+                headers={
+                    "User-Agent": _GST_UA,
+                    "Referer": "https://services.gst.gov.in/services/searchtp",
+                    "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+                },
+            )
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not reach GST portal: {exc}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="GST portal returned an error while fetching CAPTCHA.")
+
+    session_id = str(uuid.uuid4())
+    _captcha_sessions[session_id] = {
+        "cookies": dict(resp.cookies),
+        "expires_at": now + _SESSION_TTL,
+    }
+
+    content_type = resp.headers.get("content-type", "image/png").split(";")[0]
+    image_b64 = base64.b64encode(resp.content).decode()
+    return {
+        "session_id": session_id,
+        "image": f"data:{content_type};base64,{image_b64}",
+    }
+
+
+@router.get("/lookup/{gstin}")
+async def lookup_gstin(
+    gstin:      str,
+    session_id: Optional[str] = Query(None, description="Session ID from /gst/captcha"),
+    captcha:    Optional[str] = Query(None, description="User-solved CAPTCHA text"),
+    _:          User = Depends(get_current_user),
+):
+    """
+    Fetch taxpayer data by GSTIN.
+    - Without session_id/captcha: tries unofficial endpoints (no CAPTCHA) then third-party API.
+    - With session_id + captcha: uses the user-solved CAPTCHA to query the official GST portal.
+    """
+    gstin = gstin.upper().strip()
+    if not _GSTIN_RE.match(gstin):
+        raise HTTPException(status_code=400, detail="Invalid GSTIN format")
+
+    async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+
+        # ── Option C: CAPTCHA-authenticated search ──────────────────────────
+        if session_id and captcha:
+            session = _captcha_sessions.get(session_id)
+            if not session:
+                raise HTTPException(status_code=400, detail="CAPTCHA session expired or invalid. Please refresh the CAPTCHA and try again.")
+            if session["expires_at"] < time.time():
+                del _captcha_sessions[session_id]
+                raise HTTPException(status_code=400, detail="CAPTCHA session expired. Please refresh the CAPTCHA and try again.")
+
+            cookies = session["cookies"]
+            headers = {**_GST_HEADERS, "Content-Type": "application/json"}
+
+            # Try POST with JSON body (most common GST portal pattern)
+            try:
+                resp = await client.post(
+                    _CAPTCHA_SEARCH_URL,
+                    json={"gstin": gstin, "captcha": captcha.strip()},
+                    headers=headers,
+                    cookies=cookies,
+                )
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    if _has_taxpayer_data(raw):
+                        del _captcha_sessions[session_id]  # consume session
+                        return _parse_gst_response(raw)
+            except Exception:
+                pass
+
+            # Fallback: GET with query params + captcha
+            try:
+                resp = await client.get(
+                    _CAPTCHA_SEARCH_URL,
+                    params={"gstin": gstin, "captcha": captcha.strip()},
+                    headers=_GST_HEADERS,
+                    cookies=cookies,
+                )
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    if _has_taxpayer_data(raw):
+                        del _captcha_sessions[session_id]
+                        return _parse_gst_response(raw)
+            except Exception:
+                pass
+
+            raise HTTPException(
+                status_code=422,
+                detail="CAPTCHA answer was incorrect or the GST portal rejected the request. Please try again with a fresh CAPTCHA.",
+            )
+
+        # ── Option B: unofficial endpoints (no CAPTCHA) ─────────────────────
+        for url_tpl in _OPTION_B_URLS:
+            try:
+                resp = await client.get(url_tpl.format(gstin=gstin), headers=_GST_HEADERS)
+                if resp.status_code == 200:
+                    raw = resp.json()
+                    if _has_taxpayer_data(raw):
+                        return _parse_gst_response(raw)
+            except Exception:
+                continue
+
+    # Option B failed — signal the frontend to offer CAPTCHA
+    raise HTTPException(
+        status_code=503,
+        detail="CAPTCHA_REQUIRED",
+    )
 
 
 def _encrypt(data: dict) -> dict:

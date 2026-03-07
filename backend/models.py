@@ -132,10 +132,17 @@ class GSTRegistration(Base):
     ewb_user_id:       Mapped[Optional[str]]  = mapped_column(Text, nullable=True)
     ewb_password:      Mapped[Optional[str]]  = mapped_column(Text, nullable=True)  # encrypted
     ewb_api_user_id:   Mapped[Optional[str]]  = mapped_column(Text, nullable=True)
-    ewb_api_password:  Mapped[Optional[str]]  = mapped_column(Text, nullable=True)  # encrypted
-    notes:             Mapped[Optional[str]]  = mapped_column(Text, nullable=True)
-    created_at:        Mapped[datetime]       = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
-    updated_at:        Mapped[datetime]       = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    ewb_api_password:   Mapped[Optional[str]]      = mapped_column(Text, nullable=True)  # encrypted
+    # GST portal lookup data
+    trade_name:         Mapped[Optional[str]]      = mapped_column(Text, nullable=True)
+    gstin_status:       Mapped[Optional[str]]      = mapped_column(Text, nullable=True)
+    principal_address:  Mapped[Optional[str]]      = mapped_column(Text, nullable=True)
+    nature_of_business: Mapped[Optional[str]]      = mapped_column(Text, nullable=True)
+    einvoice_applicable: Mapped[Optional[bool]]    = mapped_column(Boolean, nullable=True)
+    last_fetched_at:    Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    notes:              Mapped[Optional[str]]      = mapped_column(Text, nullable=True)
+    created_at:         Mapped[datetime]           = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at:         Mapped[datetime]           = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
 
     client:     Mapped["Client"]               = relationship("Client", back_populates="gst_registrations")
     signatories: Mapped[List["GSTSignatory"]]  = relationship("GSTSignatory", back_populates="gst_registration", cascade="all, delete-orphan")

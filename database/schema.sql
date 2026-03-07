@@ -187,6 +187,14 @@ CREATE TABLE gst_registrations (
     ewb_api_user_id     TEXT,
     ewb_api_password    TEXT,           -- encrypted
 
+    -- GST portal lookup data (auto-fetched via GSTIN lookup)
+    trade_name          TEXT,
+    gstin_status        TEXT,           -- 'Active', 'Cancelled', 'Suspended'
+    principal_address   TEXT,           -- full formatted principal place of business address
+    nature_of_business  TEXT,           -- comma-separated business activities
+    einvoice_applicable BOOLEAN,
+    last_fetched_at     TIMESTAMPTZ,    -- when data was last fetched from portal
+
     notes               TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
