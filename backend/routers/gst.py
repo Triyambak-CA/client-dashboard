@@ -6,6 +6,7 @@ import time
 import base64
 import logging
 import httpx
+from curl_cffi.requests import AsyncSession as CurlSession
 from datetime import datetime as dt
 from typing import Optional
 
@@ -117,12 +118,12 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
     for k in expired:
         del _captcha_sessions[k]
 
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        # Establish a portal session first — the GST portal sets a session cookie on the
-        # search page that the CAPTCHA image is then bound to. Skipping this step causes
-        # captcha submissions to always be rejected as invalid.
+    # Use curl_cffi to impersonate Chrome's TLS fingerprint — the GST portal uses Akamai WAF
+    # which detects and blocks plain Python HTTP clients via JA3/JA4 TLS fingerprinting.
+    async with CurlSession(impersonate="chrome120") as session:
+        # Establish a portal session first so Akamai sets its session cookies
         try:
-            await client.get(
+            await session.get(
                 "https://services.gst.gov.in/services/searchtp",
                 headers={"User-Agent": _GST_UA, "Accept": "text/html,*/*"},
             )
@@ -130,7 +131,7 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
             pass  # best-effort; proceed even if unreachable
 
         try:
-            resp = await client.get(
+            resp = await session.get(
                 _CAPTCHA_IMG_URL,
                 headers={
                     "User-Agent": _GST_UA,
@@ -138,17 +139,15 @@ async def get_gst_captcha(_: User = Depends(get_current_user)):
                     "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
                 },
             )
-        except httpx.RequestError as exc:
+        except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Could not reach GST portal: {exc}")
 
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail="GST portal returned an error while fetching CAPTCHA.")
 
         session_id = str(uuid.uuid4())
-        # Use client.cookies (full session jar) instead of resp.cookies (final response only).
-        # This captures any cookies set during the search-page visit and intermediate redirects.
         _captcha_sessions[session_id] = {
-            "cookies": dict(client.cookies),
+            "cookies": {c.name: c.value for c in session.cookies},
             "expires_at": now + _SESSION_TTL,
         }
 
@@ -186,43 +185,28 @@ async def lookup_gstin(
             raise HTTPException(status_code=400, detail="CAPTCHA session expired. Please refresh the CAPTCHA and try again.")
 
         cookies = session["cookies"]
-        headers = {**_GST_HEADERS, "Content-Type": "application/json"}
         portal_err = "no response"
 
-        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
-            # Try POST with JSON body (most common GST portal pattern)
-            try:
-                resp = await client.post(
-                    _CAPTCHA_SEARCH_URL,
-                    json={"gstin": gstin, "captcha": captcha.strip()},
-                    headers=headers,
-                    cookies=cookies,
-                )
-                portal_err = f"POST {resp.status_code}: {resp.text[:400]}"
-                if resp.status_code == 200:
-                    raw = resp.json()
-                    if _has_taxpayer_data(raw):
-                        del _captcha_sessions[session_id]  # consume session
-                        return _parse_gst_response(raw)
-            except Exception as e:
-                portal_err = f"POST exception: {e}"
+        # Use curl_cffi to bypass Akamai WAF TLS fingerprint detection (POST always 405)
+        async with CurlSession(impersonate="chrome120") as curl:
+            # Restore session cookies so the portal recognises the CAPTCHA session
+            for name, value in cookies.items():
+                curl.cookies.set(name, value, domain="services.gst.gov.in")
 
-            # Fallback: GET with query params + captcha
             try:
-                resp = await client.get(
+                resp = await curl.get(
                     _CAPTCHA_SEARCH_URL,
                     params={"gstin": gstin, "captcha": captcha.strip()},
                     headers=_GST_HEADERS,
-                    cookies=cookies,
                 )
-                portal_err += f" | GET {resp.status_code}: {resp.text[:400]}"
+                portal_err = f"GET {resp.status_code}: {resp.text[:400]}"
                 if resp.status_code == 200:
                     raw = resp.json()
                     if _has_taxpayer_data(raw):
                         del _captcha_sessions[session_id]
                         return _parse_gst_response(raw)
             except Exception as e:
-                portal_err += f" | GET exception: {e}"
+                portal_err = f"GET exception: {e}"
 
         _log.warning("GST CAPTCHA lookup failed for %s: %s", gstin, portal_err)
         raise HTTPException(

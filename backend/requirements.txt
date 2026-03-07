@@ -9,4 +9,5 @@ python-dotenv==1.0.1
 cryptography==43.0.3
 python-multipart==0.0.12
 httpx==0.28.1
+curl_cffi==0.7.4
 pydantic[email]==2.9.2
