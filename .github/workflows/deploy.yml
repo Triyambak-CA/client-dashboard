@@ -22,20 +22,17 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Deploy via SSH (git pull + docker compose)
+      - name: Write .env and deploy via SSH
+        env:
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
+          GCE_ZONE: ${{ secrets.GCE_ZONE }}
+          GCE_USER: ${{ secrets.GCE_USER }}
+          GCE_INSTANCE: ${{ secrets.GCE_INSTANCE }}
         run: |
           gcloud compute ssh \
             --tunnel-through-iap \
-            --zone "${{ secrets.GCE_ZONE }}" \
-            "${{ secrets.GCE_USER }}@${{ secrets.GCE_INSTANCE }}" \
-            -- "
-              cd ~/client-dashboard &&
-              git pull origin main &&
-              cat > .env <<'ENVEOF'
-DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-SECRET_KEY=${{ secrets.SECRET_KEY }}
-CREDENTIAL_ENCRYPTION_KEY=${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
-ACCESS_TOKEN_EXPIRE_HOURS=8
-ENVEOF
-              docker compose up -d --build
-            "
+            --zone "$GCE_ZONE" \
+            "$GCE_USER@$GCE_INSTANCE" \
+            -- "cd ~/client-dashboard && git pull origin main && printf 'DB_PASSWORD=%s\nSECRET_KEY=%s\nCREDENTIAL_ENCRYPTION_KEY=%s\nACCESS_TOKEN_EXPIRE_HOURS=8\n' '$DB_PASSWORD' '$SECRET_KEY' '$CREDENTIAL_ENCRYPTION_KEY' > .env && docker compose up -d --build"
