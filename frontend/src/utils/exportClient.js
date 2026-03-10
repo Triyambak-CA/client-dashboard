@@ -181,7 +181,11 @@ export function exportSectionPDF({ client, title, head, rows }) {
   drawPDFHeader(doc, client)
   let y = 30
   y = sectionHeading(doc, title, y)
-  dataTable(doc, head, rows, y, client)
+  if (head.length === 2) {
+    kvTable(doc, rows, y, client)
+  } else {
+    dataTable(doc, head, rows, y, client)
+  }
   doc.save(`${client.display_name} — ${title}.pdf`)
 }
 
@@ -189,6 +193,7 @@ export function exportSectionPDF({ client, title, head, rows }) {
 export function exportSectionExcel({ client, title, head, rows }) {
   const wb = XLSX.utils.book_new()
   const info = [
+    [title],
     [`Client: ${client.display_name}`, `PAN: ${client.pan}`, client.constitution],
     [`Generated: ${new Date().toLocaleString('en-IN')}`],
     [],
@@ -196,7 +201,7 @@ export function exportSectionExcel({ client, title, head, rows }) {
     ...rows.map(r => r.map(c => v(c))),
   ]
   const ws = XLSX.utils.aoa_to_sheet(info)
-  applyXlStyles(ws, info, 3)
+  applyXlStyles(ws, info, 4)
   XLSX.utils.book_append_sheet(wb, ws, title.slice(0, 31))
   XLSX.writeFile(wb, `${client.display_name} — ${title}.xlsx`)
 }
