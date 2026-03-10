@@ -25,32 +25,26 @@ jobs:
           npm ci
           npm run build
 
-      - name: Copy frontend dist to VM
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.GCE_HOST }}
-          username: ${{ secrets.GCE_USER }}
-          key: ${{ secrets.GCE_SSH_KEY }}
-          source: "frontend/dist"
-          target: "~/client-dashboard"
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.GCE_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Write .env file
+        run: |
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" > .env
+          echo "SECRET_KEY=${{ secrets.SECRET_KEY }}" >> .env
+          echo "CREDENTIAL_ENCRYPTION_KEY=${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}" >> .env
+          echo "ACCESS_TOKEN_EXPIRE_HOURS=8" >> .env
+
+      - name: Copy files to VM
+        run: |
+          scp -i ~/.ssh/id_rsa -r frontend/dist "${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:~/client-dashboard/frontend/"
+          scp -i ~/.ssh/id_rsa .env "${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:~/client-dashboard/.env"
 
       - name: SSH into VM and redeploy
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          CREDENTIAL_ENCRYPTION_KEY: ${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}
-        with:
-          host: ${{ secrets.GCE_HOST }}
-          username: ${{ secrets.GCE_USER }}
-          key: ${{ secrets.GCE_SSH_KEY }}
-          command_timeout: 20m
-          envs: DB_PASSWORD,SECRET_KEY,CREDENTIAL_ENCRYPTION_KEY
-          script: |
-            cd $HOME/client-dashboard
-            git pull origin main
-            echo "DB_PASSWORD=$DB_PASSWORD" > .env
-            echo "SECRET_KEY=$SECRET_KEY" >> .env
-            echo "CREDENTIAL_ENCRYPTION_KEY=$CREDENTIAL_ENCRYPTION_KEY" >> .env
-            echo "ACCESS_TOKEN_EXPIRE_HOURS=8" >> .env
-            docker compose up -d --build
+        run: |
+          ssh -i ~/.ssh/id_rsa "${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}" \
+            "cd ~/client-dashboard && git pull origin main && docker compose up -d --build"
