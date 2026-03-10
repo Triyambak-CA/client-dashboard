@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  id-token: write   # required for Workload Identity Federation
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -25,12 +29,14 @@ jobs:
           npm ci
           npm run build
 
-      - name: Setup SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
       - name: Write .env file
         run: |
@@ -39,12 +45,21 @@ jobs:
           echo "CREDENTIAL_ENCRYPTION_KEY=${{ secrets.CREDENTIAL_ENCRYPTION_KEY }}" >> .env
           echo "ACCESS_TOKEN_EXPIRE_HOURS=8" >> .env
 
-      - name: Copy files to VM
+      - name: Copy files to VM via IAP tunnel
         run: |
-          scp -i ~/.ssh/id_rsa -r frontend/dist "${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:~/client-dashboard/frontend/"
-          scp -i ~/.ssh/id_rsa .env "${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}:~/client-dashboard/.env"
+          gcloud compute scp --recurse \
+            --tunnel-through-iap \
+            --zone "${{ secrets.GCE_ZONE }}" \
+            frontend/dist "${{ secrets.GCE_INSTANCE }}:~/client-dashboard/frontend/"
+          gcloud compute scp \
+            --tunnel-through-iap \
+            --zone "${{ secrets.GCE_ZONE }}" \
+            .env "${{ secrets.GCE_INSTANCE }}:~/client-dashboard/.env"
 
       - name: SSH into VM and redeploy
         run: |
-          ssh -i ~/.ssh/id_rsa "${{ secrets.GCE_USER }}@${{ secrets.GCE_HOST }}" \
-            "cd ~/client-dashboard && git pull origin main && docker compose up -d --build"
+          gcloud compute ssh \
+            --tunnel-through-iap \
+            --zone "${{ secrets.GCE_ZONE }}" \
+            "${{ secrets.GCE_USER }}@${{ secrets.GCE_INSTANCE }}" \
+            -- "cd ~/client-dashboard && git pull origin main && docker compose up -d --build"
