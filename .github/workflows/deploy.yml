@@ -30,7 +30,7 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "${{ secrets.GCE_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "StrictHostKeyChecking no" >> ~/.ssh/config
 
       - name: Write .env file
         run: |
