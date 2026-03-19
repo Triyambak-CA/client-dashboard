@@ -3,7 +3,7 @@ import { gstApi, clientsApi } from '../../api'
 import Modal from '../Modal'
 import ExportMenu from '../ExportMenu'
 import { exportSectionPDF, exportSectionExcel } from '../../utils/exportClient'
-import { Plus, Trash2, Edit2, Eye, EyeOff, UserPlus, UserMinus, RefreshCw, Loader2 } from 'lucide-react'
+import { Plus, Trash2, Edit2, Eye, EyeOff, UserPlus, UserMinus } from 'lucide-react'
 
 const GST_TYPES = ['Regular', 'Composition', 'QRMP', 'SEZ Unit', 'SEZ Developer', 'Casual', 'Non-Resident']
 
@@ -53,16 +53,6 @@ export default function GSTTab({ clientId, client }) {
   const [saving,  setSaving]    = useState(false)
   const [error,   setError]     = useState('')
 
-  // GSTIN fetch state
-  const [fetching,         setFetching]         = useState(false)
-  const [fetchError,       setFetchError]       = useState('')
-  const [legalNameWarning, setLegalNameWarning] = useState('')
-  // Inline CAPTCHA state
-  const [captcha,          setCaptcha]          = useState(null)   // { img, sessionId }
-  const [captchaText,      setCaptchaText]      = useState('')
-  const [captchaVerifying, setCaptchaVerifying] = useState(false)
-  const [captchaError,     setCaptchaError]     = useState('')
-
   const fetchRecords = async () => {
     try { const r = await gstApi.list(clientId); setRecords(r.data) }
     catch (e) { console.error(e) }
@@ -75,99 +65,13 @@ export default function GSTTab({ clientId, client }) {
 
   useEffect(() => { fetchRecords(); fetchClients() }, [clientId])
 
-  const _resetFetchState = () => {
-    setFetchError(''); setLegalNameWarning('')
-    setCaptcha(null); setCaptchaText(''); setCaptchaError('')
-  }
-
   const openAdd  = () => {
     setForm({ client_id: clientId, is_active: true })
-    setEditing(null); _resetFetchState(); setModal('add')
+    setEditing(null); setModal('add')
   }
   const openEdit = rec => {
     setForm({ ...rec })
-    setEditing(rec); _resetFetchState(); setModal('edit')
-  }
-
-  const _applyGstData = d => {
-    setForm(f => ({
-      ...f,
-      state:               d.state               || f.state,
-      state_code:          d.state_code          || f.state_code,
-      registration_type:   _mapRegType(d.registration_type) || f.registration_type,
-      gstin_status:        d.gstin_status        ?? f.gstin_status,
-      registration_date:   d.registration_date   || f.registration_date,
-      cancellation_date:   d.cancellation_date   || f.cancellation_date,
-      trade_name:          d.trade_name          ?? f.trade_name,
-      principal_address:   d.principal_address   ?? f.principal_address,
-      nature_of_business:  d.nature_of_business  ?? f.nature_of_business,
-      einvoice_applicable: d.einvoice_applicable ?? f.einvoice_applicable,
-      last_fetched_at:     d.last_fetched_at     || f.last_fetched_at,
-    }))
-    const gstLegal    = (d.legal_name || '').trim()
-    const clientLegal = (client?.legal_name || '').trim()
-    if (gstLegal && clientLegal && gstLegal.toLowerCase() !== clientLegal.toLowerCase()) {
-      setLegalNameWarning(`GST portal legal name: "${gstLegal}" — differs from master record: "${clientLegal}"`)
-    } else if (!clientLegal && gstLegal) {
-      setLegalNameWarning(`Legal name not set on master record. GST portal shows: "${gstLegal}"`)
-    }
-  }
-
-  const fetchFromGstin = async () => {
-    const gstin = (form.gstin || '').trim().toUpperCase()
-    if (gstin.length !== 15) return
-    setFetching(true); _resetFetchState()
-    try {
-      const r = await gstApi.lookup(gstin)
-      _applyGstData(r.data)
-    } catch (err) {
-      const detail = err.response?.data?.detail || ''
-      if (detail === 'GST_PORTAL_REQUIRED' || err.response?.status === 503) {
-        await loadCaptcha()
-      } else {
-        setFetchError(detail || 'Could not fetch from GST portal. Please fill in manually.')
-      }
-    } finally {
-      setFetching(false)
-    }
-  }
-
-  const loadCaptcha = async () => {
-    setCaptcha(null); setCaptchaText(''); setCaptchaError('')
-    try {
-      const r = await gstApi.getCaptcha()
-      setCaptcha({ img: r.data.captcha_image, sessionId: r.data.session_id })
-    } catch {
-      setFetchError('Could not load CAPTCHA. Please fill in manually.')
-    }
-  }
-
-  const submitCaptcha = async () => {
-    const gstin = (form.gstin || '').trim().toUpperCase()
-    if (!captchaText.trim() || !captcha) return
-    setCaptchaVerifying(true); setCaptchaError('')
-    try {
-      const r = await gstApi.verifyCaptcha(captcha.sessionId, gstin, captchaText)
-      _applyGstData(r.data)
-      setCaptcha(null); setCaptchaText('')
-    } catch (err) {
-      const detail = err.response?.data?.detail || ''
-      if (detail === 'CAPTCHA_WRONG') {
-        setCaptchaError('Wrong CAPTCHA — try again.')
-        await loadCaptcha()
-        setCaptchaText('')
-      } else if (detail === 'CAPTCHA_EXPIRED') {
-        setCaptchaError('CAPTCHA expired — reloading.')
-        await loadCaptcha()
-        setCaptchaText('')
-      } else if (detail === 'GSTIN_NOT_FOUND') {
-        setCaptchaError('GSTIN not found on GST portal.')
-      } else {
-        setCaptchaError('Verification failed. Please try again.')
-      }
-    } finally {
-      setCaptchaVerifying(false)
-    }
+    setEditing(rec); setModal('edit')
   }
 
   const save = async e => {
@@ -208,12 +112,6 @@ export default function GSTTab({ clientId, client }) {
       : e.target.value === 'false' ? false
       : e.target.value
   }))
-
-  // When GSTIN changes, clear fetch results
-  const onGstinChange = e => {
-    setFetchError(''); setLegalNameWarning('')
-    h(e)
-  }
 
   const exportHead = [
     'GSTIN', 'Trade Name', 'Portal Status', 'State', 'Type', 'Reg Date', 'Cancel Date',
@@ -336,73 +234,15 @@ export default function GSTTab({ clientId, client }) {
         <Modal title={modal === 'edit' ? 'Edit GST Registration' : 'Add GST Registration'} onClose={() => setModal(null)}>
           <form onSubmit={save} className="space-y-3">
 
-            {/* GSTIN row with Fetch button */}
+            {/* GSTIN */}
             <div className="col-span-2">
               <label className="block text-xs font-medium text-gray-600 mb-1">GSTIN *</label>
-              <div className="flex gap-2">
-                <input
-                  type="text" name="gstin" value={form.gstin || ''} onChange={onGstinChange}
-                  required maxLength={15}
-                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="15-character GSTIN"
-                />
-                <button
-                  type="button" onClick={fetchFromGstin}
-                  disabled={fetching || (form.gstin || '').trim().length !== 15}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-[#1F3864] text-[#1F3864] hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                  title="Fetch details from GST portal"
-                >
-                  {fetching ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                  {fetching ? 'Fetching…' : 'Fetch from GST'}
-                </button>
-              </div>
-              {fetchError && (
-                <p className="text-red-600 text-xs mt-1 bg-red-50 px-2 py-1 rounded">{fetchError}</p>
-              )}
-              {captcha && (
-                <div className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2">
-                  <p className="text-xs text-gray-600 font-medium">Enter the CAPTCHA shown below to fetch GST details:</p>
-                  <div className="flex items-center gap-3">
-                    <img src={captcha.img} alt="CAPTCHA" className="h-10 border border-gray-200 rounded bg-white" />
-                    <button
-                      type="button"
-                      onClick={loadCaptcha}
-                      className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
-                      title="Refresh CAPTCHA"
-                    >
-                      <RefreshCw size={11} /> Refresh
-                    </button>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={captchaText}
-                      onChange={e => setCaptchaText(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && submitCaptcha()}
-                      placeholder="Type CAPTCHA here"
-                      className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={submitCaptcha}
-                      disabled={captchaVerifying || !captchaText.trim()}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-[#1F3864] text-white rounded hover:bg-blue-900 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
-                    >
-                      {captchaVerifying ? <Loader2 size={11} className="animate-spin" /> : null}
-                      {captchaVerifying ? 'Verifying…' : 'Submit'}
-                    </button>
-                  </div>
-                  {captchaError && (
-                    <p className="text-red-600 text-xs">{captchaError}</p>
-                  )}
-                </div>
-              )}
-              {legalNameWarning && (
-                <p className="text-amber-700 text-xs mt-1 bg-amber-50 px-2 py-1.5 rounded border border-amber-200">
-                  ⚠ {legalNameWarning}
-                </p>
-              )}
+              <input
+                type="text" name="gstin" value={form.gstin || ''} onChange={h}
+                required maxLength={15}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="15-character GSTIN"
+              />
             </div>
 
             {/* Core Registration Details */}

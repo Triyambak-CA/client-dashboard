@@ -46,9 +46,6 @@ export const gstApi = {
   create:          (data)            => api.post('/gst', data),
   update:          (id, data)        => api.put(`/gst/${id}`, data),
   delete:          (id)              => api.delete(`/gst/${id}`),
-  lookup:          (gstin)           => api.get(`/gst/lookup/${gstin}`),
-  getCaptcha:      ()                => api.get('/gst/captcha'),
-  verifyCaptcha:   (sessionId, gstin, captcha) => api.post('/gst/captcha-verify', { session_id: sessionId, gstin, captcha }),
   addSignatory:    (gstId, clientId) => api.post(`/gst/${gstId}/signatories`, { signatory_client_id: clientId }),
   removeSignatory: (gstId, sigId)    => api.delete(`/gst/${gstId}/signatories/${sigId}`),
 }

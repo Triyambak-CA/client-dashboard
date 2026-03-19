@@ -30,7 +30,13 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.GCE_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+          cat >> ~/.ssh/config <<EOF
+          Host *
+            StrictHostKeyChecking no
+            ConnectTimeout 30
+            ServerAliveInterval 15
+            ServerAliveCountMax 3
+          EOF
 
       - name: Write .env file
         run: |
